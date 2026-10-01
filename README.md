@@ -10,15 +10,40 @@ View your app in AI Studio: https://ai.studio/apps/91c59569-7b23-42b6-8096-54412
 
 ## Ejecutar localmente
 
-**Requisitos:** Node.js 20+ y Docker Desktop (para PostgreSQL).
+**Requisitos:** Node.js 20+, npm y Docker Desktop (para PostgreSQL). Docker Desktop debe estar abierto y corriendo antes del paso 3.
 
-1. Copie `.env.example` a `.env.local` y reemplace todas las claves de ejemplo, especialmente `POSTGRES_PASSWORD`, `DATABASE_URL`, `JWT_SECRET` y `ADMIN_PASSWORD`.
-2. Inicie PostgreSQL: `docker compose up -d postgres`.
-3. En una terminal, inicie la API: `npm run dev:api`.
-4. En otra terminal, inicie la interfaz: `npm run dev`.
-5. Abra `http://localhost:3000`.
+1. Clone o actualice el repositorio y entre a la carpeta del proyecto:
+   ```bash
+   git clone https://github.com/jaestrada40/forms.git
+   cd forms
+   ```
+   (Si ya lo tiene clonado, simplemente `git pull`.)
+2. Instale las dependencias:
+   ```bash
+   npm install
+   ```
+3. Cree su archivo de variables de entorno local a partir del ejemplo:
+   ```bash
+   cp .env.example .env.local
+   ```
+   Abra `.env.local` y reemplace todas las claves de ejemplo, especialmente `POSTGRES_PASSWORD`, `DATABASE_URL` (debe usar la misma contraseña que `POSTGRES_PASSWORD`), `JWT_SECRET` (mínimo 32 caracteres aleatorios) y `ADMIN_PASSWORD`. Este archivo no se sube al repositorio.
+4. Levante PostgreSQL con Docker:
+   ```bash
+   docker compose up -d postgres
+   ```
+   Esto crea el contenedor `formularios-postgres` con un volumen persistente (`postgres_data`), así que sus datos no se pierden al apagar el contenedor. Puede verificar que esté sano con `docker compose ps`.
+5. En una terminal, inicie la API (se reinicia sola al guardar cambios en `server/`):
+   ```bash
+   npm run dev:api
+   ```
+   La primera vez que corre contra una base vacía, crea automáticamente las tablas y el usuario administrador definido en las variables `ADMIN_*` de `.env.local`.
+6. En otra terminal (dejando la anterior corriendo), inicie la interfaz:
+   ```bash
+   npm run dev
+   ```
+7. Abra `http://localhost:3000` en el navegador. La API queda expuesta en `http://localhost:4000`.
 
-La API se expone en `http://localhost:4000`. Al arrancar con una base vacía crea el administrador definido en las variables `ADMIN_*`.
+**Para detener todo:** cierre las dos terminales (`Ctrl+C`) y luego `docker compose stop`. Para apagar el contenedor y además borrar los datos guardados, use `docker compose down -v` (irreversible).
 
 ## API inicial
 
