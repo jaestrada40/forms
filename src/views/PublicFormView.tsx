@@ -14,11 +14,12 @@ import {
 } from 'lucide-react';
 import { Form, FormField, FormResponse } from '../types';
 import { generateFolio, formatDateSpanish } from '../utils/helpers';
+import { GUATEMALA_DEPARTMENTS, GUATEMALA_DEPARTMENT_NAMES } from '../data/guatemalaLocations';
 
 interface PublicFormViewProps {
   form: Form;
   onSubmitResponse: (newResponse: FormResponse) => void;
-  onExitToAdmin: () => void;
+  onExitToAdmin?: () => void;
 }
 
 export const PublicFormView: React.FC<PublicFormViewProps> = ({
@@ -102,6 +103,10 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
           newErrors[f.id] = 'Este campo es obligatorio.';
           return;
         }
+        if (f.type === 'guatemala_location' && (!val.department || !val.municipality)) {
+          newErrors[f.id] = 'Seleccione departamento y municipio.';
+          return;
+        }
       }
 
       // Email validation
@@ -115,12 +120,21 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
 
       // Min/Max characters
       if (f.validation?.minLength && val && String(val).length < f.validation.minLength) {
-        newErrors[f.id] = `Debe contener al menos ${f.validation.minLength} caracteres.`;
+        newErrors[f.id] = f.validation.customErrorMessage || `Debe contener al menos ${f.validation.minLength} caracteres.`;
         return;
       }
       if (f.validation?.maxLength && val && String(val).length > f.validation.maxLength) {
-        newErrors[f.id] = `No debe exceder los ${f.validation.maxLength} caracteres.`;
+        newErrors[f.id] = f.validation.customErrorMessage || `No debe exceder los ${f.validation.maxLength} caracteres.`;
         return;
+      }
+
+      // Pattern validation (e.g. phone numbers restricted to digits)
+      if (f.validation?.regexPattern && val) {
+        const pattern = new RegExp(f.validation.regexPattern);
+        if (!pattern.test(String(val))) {
+          newErrors[f.id] = f.validation.customErrorMessage || 'El valor ingresado no tiene un formato válido.';
+          return;
+        }
       }
 
       // Min/Max numbers
@@ -244,12 +258,14 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
               </button>
             )}
 
-            <button
-              onClick={onExitToAdmin}
-              className="w-full py-2 px-4 text-xs font-medium text-blue-700 hover:text-blue-900 transition-colors mt-2"
-            >
-              Volver al panel administrativo de Formularios →
-            </button>
+            {onExitToAdmin && (
+              <button
+                onClick={onExitToAdmin}
+                className="w-full py-2 px-4 text-xs font-medium text-blue-700 hover:text-blue-900 transition-colors mt-2"
+              >
+                Volver al panel administrativo de Formularios →
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -258,15 +274,17 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center py-6 px-4 sm:px-6">
-      {/* Return to admin top floating pill (for test navigation) */}
-      <div className="w-full max-w-2xl mb-4 flex items-center justify-between text-xs text-slate-500">
-        <button
-          onClick={onExitToAdmin}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium transition-colors shadow-2xs"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Volver al panel</span>
-        </button>
+      {/* Return to admin top floating pill (admin preview only) */}
+      <div className="w-full max-w-2xl mb-4 flex items-center justify-end text-xs text-slate-500">
+        {onExitToAdmin && (
+          <button
+            onClick={onExitToAdmin}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 font-medium transition-colors shadow-2xs mr-auto"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Volver al panel</span>
+          </button>
+        )}
 
         <div className="flex items-center gap-1 text-[11px] text-slate-500">
           <Lock className="w-3 h-3 text-slate-400" />
@@ -392,12 +410,67 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                   {field.type === 'phone' && (
                     <input
                       type="tel"
+                      inputMode="numeric"
+                      maxLength={field.validation?.maxLength || 8}
                       value={val || ''}
-                      onChange={(e) => handleFieldChange(field.id, e.target.value)}
-                      placeholder={field.placeholder || '+56 9 1234 5678'}
+                      onChange={(e) => handleFieldChange(field.id, e.target.value.replace(/\D/g, '').slice(0, field.validation?.maxLength || 8))}
+                      placeholder={field.placeholder || '+502 '}
                       className="w-full sm:w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800"
                     />
                   )}
+
+                  {field.type === 'dpi' && (
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={13}
+                      value={val || ''}
+                      onChange={(e) => handleFieldChange(field.id, e.target.value.replace(/\D/g, '').slice(0, 13))}
+                      placeholder={field.placeholder || '1234567890101'}
+                      className="w-full sm:w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800 font-mono"
+                    />
+                  )}
+
+                  {field.type === 'nit' && (
+                    <input
+                      type="text"
+                      maxLength={10}
+                      value={val || ''}
+                      onChange={(e) => handleFieldChange(field.id, e.target.value.toUpperCase().replace(/[^0-9K-]/g, '').slice(0, 10))}
+                      placeholder={field.placeholder || '12345678-9'}
+                      className="w-full sm:w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800 font-mono"
+                    />
+                  )}
+
+                  {field.type === 'guatemala_location' && (() => {
+                    const locVal = (val || {}) as { department?: string; municipality?: string };
+                    const municipios = locVal.department ? (GUATEMALA_DEPARTMENTS[locVal.department] || []) : [];
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <select
+                          value={locVal.department || ''}
+                          onChange={(e) => handleFieldChange(field.id, { department: e.target.value, municipality: '' })}
+                          className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800"
+                        >
+                          <option value="">Departamento...</option>
+                          {GUATEMALA_DEPARTMENT_NAMES.map(dep => (
+                            <option key={dep} value={dep}>{dep}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={locVal.municipality || ''}
+                          disabled={!locVal.department}
+                          onChange={(e) => handleFieldChange(field.id, { department: locVal.department, municipality: e.target.value })}
+                          className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <option value="">{locVal.department ? 'Municipio...' : 'Elija primero un departamento'}</option>
+                          {municipios.map(mun => (
+                            <option key={mun} value={mun}>{mun}</option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })()}
 
                   {field.type === 'date' && (
                     <input
@@ -559,33 +632,57 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                     </div>
                   )}
 
-                  {field.type === 'file_upload' && (
-                    <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 rounded-xl p-5 text-center bg-slate-50/50 transition-colors">
-                      <Upload className="w-6 h-6 text-slate-400 mx-auto mb-2" />
-                      <div className="text-xs font-semibold text-slate-700">
-                        {val ? `Archivo seleccionado: ${val.name || 'documento_respaldo.pdf'}` : 'Haga clic para subir o arrastre sus archivos aquí'}
+                  {field.type === 'file_upload' && (() => {
+                    const allowedTypes = field.fileConfig?.allowedTypes || ['pdf', 'png', 'jpg'];
+                    const maxMb = field.fileConfig?.maxMb || 10;
+                    const acceptAttr = allowedTypes.map(t => `.${t}`).join(',');
+                    return (
+                      <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 rounded-xl p-5 text-center bg-slate-50/50 transition-colors">
+                        <Upload className="w-6 h-6 text-slate-400 mx-auto mb-2" />
+                        <div className="text-xs font-semibold text-slate-700">
+                          {val ? `Archivo seleccionado: ${val.name} (${((val.size || 0) / 1024).toFixed(0)} KB)` : 'Haga clic para subir o arrastre sus archivos aquí'}
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-1">
+                          Formatos {allowedTypes.join(', ').toUpperCase()} hasta {maxMb} MB
+                        </div>
+                        <input
+                          type="file"
+                          accept={acceptAttr}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const ext = file.name.split('.').pop()?.toLowerCase() || '';
+                            if (!allowedTypes.includes(ext)) {
+                              setErrors(prev => ({ ...prev, [field.id]: `Formato no permitido. Use: ${allowedTypes.join(', ').toUpperCase()}.` }));
+                              e.target.value = '';
+                              return;
+                            }
+                            if (file.size > maxMb * 1024 * 1024) {
+                              setErrors(prev => ({ ...prev, [field.id]: `El archivo supera el máximo de ${maxMb} MB.` }));
+                              e.target.value = '';
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              handleFieldChange(field.id, { name: file.name, size: file.size, type: file.type, dataUrl: reader.result as string });
+                            };
+                            reader.onerror = () => {
+                              setErrors(prev => ({ ...prev, [field.id]: 'No fue posible leer el archivo seleccionado.' }));
+                            };
+                            reader.readAsDataURL(file);
+                          }}
+                          className="hidden"
+                          id={`file_${field.id}`}
+                        />
+                        <label
+                          htmlFor={`file_${field.id}`}
+                          className="inline-block mt-3 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-medium cursor-pointer hover:bg-slate-50"
+                        >
+                          {val ? 'Cambiar archivo' : 'Seleccionar archivo'}
+                        </label>
                       </div>
-                      <div className="text-[11px] text-slate-400 mt-1">
-                        Formatos PDF, PNG o JPG hasta 10 MB
-                      </div>
-                      <input
-                        type="file"
-                        onChange={(e) => {
-                          if (e.target.files && e.target.files[0]) {
-                            handleFieldChange(field.id, { name: e.target.files[0].name, size: e.target.files[0].size });
-                          }
-                        }}
-                        className="hidden"
-                        id={`file_${field.id}`}
-                      />
-                      <label
-                        htmlFor={`file_${field.id}`}
-                        className="inline-block mt-3 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-medium cursor-pointer hover:bg-slate-50"
-                      >
-                        Seleccionar archivo
-                      </label>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
 
                 {/* Error message */}

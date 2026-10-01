@@ -22,8 +22,16 @@ export async function initializeDatabase() {
       role TEXT NOT NULL CHECK (role IN ('Administrador', 'Creador', 'Analista', 'Respondedor')),
       department TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'Activo' CHECK (status IN ('Activo', 'Invitado', 'Inactivo')),
+      mfa_secret TEXT,
+      mfa_enabled BOOLEAN NOT NULL DEFAULT false,
+      mfa_enabled_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS forms (
@@ -63,6 +71,10 @@ export async function initializeDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_forms_created_by ON forms(created_by);
     CREATE INDEX IF NOT EXISTS idx_responses_form_submitted ON form_responses(form_id, submitted_at DESC);
+
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled_at TIMESTAMPTZ;
   `);
 
   const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
@@ -85,5 +97,17 @@ export async function audit(actorId: string | undefined, action: string, entityT
   await db.query(
     'INSERT INTO audit_log (actor_id, action, entity_type, entity_id, metadata) VALUES ($1, $2, $3, $4, $5)',
     [actorId ?? null, action, entityType, entityId, metadata],
+  );
+}
+
+export async function getSetting<T>(key: string, fallback: T): Promise<T> {
+  const result = await db.query('SELECT value FROM app_settings WHERE key = $1', [key]);
+  return result.rowCount ? (result.rows[0].value as T) : fallback;
+}
+
+export async function setSetting(key: string, value: unknown) {
+  await db.query(
+    'INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2',
+    [key, JSON.stringify(value)],
   );
 }

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { 
+import { createPortal } from 'react-dom';
+import {
   Plus, 
   FileText, 
   CheckCircle2, 
@@ -54,6 +55,27 @@ export const FormsList: React.FC<FormsListProps> = ({
   const [statusFilter, setStatusFilter] = useState<'all' | FormStatus>('all');
   const [departmentFilter, setDepartmentFilter] = useState<string>('all');
   const [activeDropdownId, setActiveDropdownId] = useState<string | null>(null);
+  const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number } | null>(null);
+
+  const openDropdown = (formId: string, anchor: HTMLElement) => {
+    if (activeDropdownId === formId) {
+      setActiveDropdownId(null);
+      setDropdownPosition(null);
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    const MENU_WIDTH = 176;
+    setDropdownPosition({
+      top: rect.bottom + 4,
+      left: Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8),
+    });
+    setActiveDropdownId(formId);
+  };
+
+  const closeDropdown = () => {
+    setActiveDropdownId(null);
+    setDropdownPosition(null);
+  };
 
   // Compute metrics
   const metrics = useMemo(() => {
@@ -411,56 +433,63 @@ export const FormsList: React.FC<FormsListProps> = ({
                         {/* Dropdown Menu */}
                         <div className="relative">
                           <button
-                            onClick={() => setActiveDropdownId(activeDropdownId === form.id ? null : form.id)}
+                            onClick={(e) => openDropdown(form.id, e.currentTarget)}
                             className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors"
                           >
                             <MoreVertical className="w-4 h-4" />
                           </button>
 
-                          {activeDropdownId === form.id && (
-                            <div className="absolute right-0 mt-1 w-44 bg-white border border-slate-200 rounded-xl shadow-xl z-30 p-1 text-left animate-in fade-in duration-75">
-                              <button
-                                onClick={() => {
-                                  setActiveDropdownId(null);
-                                  onOpenShareModal(form);
-                                }}
-                                className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                          {activeDropdownId === form.id && dropdownPosition && createPortal(
+                            <>
+                              <div className="fixed inset-0 z-40" onClick={closeDropdown} />
+                              <div
+                                className="fixed w-44 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-1 text-left"
+                                style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
                               >
-                                <Share2 className="w-3.5 h-3.5 text-blue-600" />
-                                Compartir enlace
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setActiveDropdownId(null);
-                                  onOpenPublishModal(form);
-                                }}
-                                className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
-                              >
-                                <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
-                                Cambiar estado
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setActiveDropdownId(null);
-                                  onOpenDuplicateModal(form);
-                                }}
-                                className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
-                              >
-                                <Copy className="w-3.5 h-3.5 text-slate-500" />
-                                Duplicar
-                              </button>
-                              <div className="border-t border-slate-100 my-1"></div>
-                              <button
-                                onClick={() => {
-                                  setActiveDropdownId(null);
-                                  onOpenDeleteModal(form);
-                                }}
-                                className="w-full px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-2 font-medium"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                Eliminar formulario
-                              </button>
-                            </div>
+                                <button
+                                  onClick={() => {
+                                    closeDropdown();
+                                    onOpenShareModal(form);
+                                  }}
+                                  className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                >
+                                  <Share2 className="w-3.5 h-3.5 text-blue-600" />
+                                  Compartir enlace
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    closeDropdown();
+                                    onOpenPublishModal(form);
+                                  }}
+                                  className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                >
+                                  <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
+                                  Cambiar estado
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    closeDropdown();
+                                    onOpenDuplicateModal(form);
+                                  }}
+                                  className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                >
+                                  <Copy className="w-3.5 h-3.5 text-slate-500" />
+                                  Duplicar
+                                </button>
+                                <div className="border-t border-slate-100 my-1"></div>
+                                <button
+                                  onClick={() => {
+                                    closeDropdown();
+                                    onOpenDeleteModal(form);
+                                  }}
+                                  className="w-full px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-2 font-medium"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Eliminar formulario
+                                </button>
+                              </div>
+                            </>,
+                            document.body
                           )}
                         </div>
                       </div>

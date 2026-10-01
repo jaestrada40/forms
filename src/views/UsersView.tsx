@@ -1,16 +1,20 @@
 import React, { useState } from 'react';
-import { 
-  Users2, 
-  UserPlus, 
-  Shield, 
-  Check, 
-  Clock, 
-  MoreVertical, 
-  Mail, 
-  Search, 
+import { createPortal } from 'react-dom';
+import {
+  Users2,
+  UserPlus,
+  Shield,
+  ShieldCheck,
+  ShieldOff,
+  Check,
+  Clock,
+  MoreVertical,
+  Mail,
+  Search,
   AlertCircle,
   FileCheck2,
-  Lock
+  Lock,
+  RotateCcw
 } from 'lucide-react';
 import { UserAccount, UserRole, UserStatus } from '../types';
 
@@ -18,6 +22,7 @@ interface UsersViewProps {
   users: UserAccount[];
   onOpenInviteModal: () => void;
   onUpdateUserRole: (userId: string, newRole: UserRole) => void;
+  onResetUserMfa: (userId: string) => void;
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -25,11 +30,33 @@ export const UsersView: React.FC<UsersViewProps> = ({
   users,
   onOpenInviteModal,
   onUpdateUserRole,
+  onResetUserMfa,
   showToast
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
+
+  const openMenu = (userId: string, anchor: HTMLElement) => {
+    if (activeMenuId === userId) {
+      setActiveMenuId(null);
+      setMenuPosition(null);
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    const MENU_WIDTH = 224;
+    setMenuPosition({
+      top: rect.bottom + 4,
+      left: Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8),
+    });
+    setActiveMenuId(userId);
+  };
+
+  const closeMenu = () => {
+    setActiveMenuId(null);
+    setMenuPosition(null);
+  };
 
   const filteredUsers = users.filter(u => {
     const matchesSearch = !searchQuery ||
@@ -176,6 +203,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 <th className="py-3 px-4">Departamento</th>
                 <th className="py-3 px-4">Rol Asignado</th>
                 <th className="py-3 px-4">Estado</th>
+                <th className="py-3 px-4">MFA</th>
                 <th className="py-3 px-4">Última Actividad</th>
                 <th className="py-3 px-4 text-right">Acciones</th>
               </tr>
@@ -207,48 +235,82 @@ export const UsersView: React.FC<UsersViewProps> = ({
                     {getStatusBadge(user.status)}
                   </td>
 
+                  <td className="py-3.5 px-4 whitespace-nowrap">
+                    {user.mfaEnabled ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700 font-medium">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        Activo
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-slate-400 font-medium">
+                        <ShieldOff className="w-3.5 h-3.5" />
+                        Sin configurar
+                      </span>
+                    )}
+                  </td>
+
                   <td className="py-3.5 px-4 whitespace-nowrap text-slate-500 text-[11px]">
                     {user.lastActive}
                   </td>
 
                   <td className="py-3.5 px-4 text-right whitespace-nowrap relative">
                     <button
-                      onClick={() => setActiveMenuId(activeMenuId === user.id ? null : user.id)}
+                      onClick={(e) => openMenu(user.id, e.currentTarget)}
                       className="p-1.5 text-slate-400 hover:text-slate-700 rounded-md"
                     >
                       <MoreVertical className="w-4 h-4" />
                     </button>
 
-                    {activeMenuId === user.id && (
-                      <div className="absolute right-4 mt-1 w-44 bg-white border border-slate-200 rounded-xl shadow-xl z-30 p-1 text-left">
-                        <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          Cambiar Rol:
-                        </div>
-                        {(['Administrador', 'Creador', 'Analista', 'Respondedor'] as const).map(role => (
-                          <button
-                            key={role}
-                            onClick={() => {
-                              onUpdateUserRole(user.id, role);
-                              setActiveMenuId(null);
-                              showToast(`Rol de ${user.name} actualizado a ${role}`, 'success');
-                            }}
-                            className="w-full px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50 rounded flex items-center justify-between"
-                          >
-                            <span>{role}</span>
-                            {user.role === role && <Check className="w-3 h-3 text-blue-700" />}
-                          </button>
-                        ))}
-                        <div className="border-t border-slate-100 my-1"></div>
-                        <button
-                          onClick={() => {
-                            setActiveMenuId(null);
-                            showToast(`Invitación reenviada a ${user.email}`, 'info');
-                          }}
-                          className="w-full px-2.5 py-1 text-xs text-blue-700 hover:bg-blue-50 rounded"
+                    {activeMenuId === user.id && menuPosition && createPortal(
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={closeMenu} />
+                        <div
+                          className="fixed w-56 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-1 text-left"
+                          style={{ top: menuPosition.top, left: menuPosition.left }}
                         >
-                          Reenviar credenciales
-                        </button>
-                      </div>
+                          <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                            Cambiar Rol:
+                          </div>
+                          {(['Administrador', 'Creador', 'Analista', 'Respondedor'] as const).map(role => (
+                            <button
+                              key={role}
+                              onClick={() => {
+                                onUpdateUserRole(user.id, role);
+                                closeMenu();
+                                showToast(`Rol de ${user.name} actualizado a ${role}`, 'success');
+                              }}
+                              className="w-full px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50 rounded flex items-center justify-between"
+                            >
+                              <span>{role}</span>
+                              {user.role === role && <Check className="w-3 h-3 text-blue-700" />}
+                            </button>
+                          ))}
+                          <div className="border-t border-slate-100 my-1"></div>
+                          <button
+                            onClick={() => {
+                              closeMenu();
+                              showToast(`Invitación reenviada a ${user.email}`, 'info');
+                            }}
+                            className="w-full px-2.5 py-1 text-xs text-blue-700 hover:bg-blue-50 rounded"
+                          >
+                            Reenviar credenciales
+                          </button>
+                          {user.mfaEnabled && (
+                            <button
+                              onClick={() => {
+                                closeMenu();
+                                onResetUserMfa(user.id);
+                              }}
+                              className="w-full px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-50 rounded flex items-center gap-1.5"
+                              title="Úselo si el usuario perdió su teléfono o no puede generar códigos"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              Restablecer MFA (perdió el teléfono)
+                            </button>
+                          )}
+                        </div>
+                      </>,
+                      document.body
                     )}
                   </td>
                 </tr>

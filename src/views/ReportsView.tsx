@@ -18,7 +18,7 @@ import {
   Users
 } from 'lucide-react';
 import { Form, FormResponse } from '../types';
-import { formatTimeSeconds } from '../utils/helpers';
+import { formatTimeSeconds, formatDateSpanish, exportTableToCSV } from '../utils/helpers';
 
 interface ReportsViewProps {
   forms: Form[];
@@ -53,67 +53,112 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       rList = rList.filter(r => formIds.has(r.formId) || r.respondentDepartment === selectedDepartment);
     }
 
-    return { forms: fList, responses: rList };
-  }, [forms, responses, selectedFormFilter, selectedDepartment]);
+    if (selectedDateRange !== 'all_time') {
+      const days = selectedDateRange === '7_days' ? 7 : selectedDateRange === '30_days' ? 30 : 90;
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+      rList = rList.filter(r => new Date(r.submittedAt).getTime() >= cutoff);
+    }
 
-  // Executive KPI stats
+    return { forms: fList, responses: rList };
+  }, [forms, responses, selectedFormFilter, selectedDepartment, selectedDateRange]);
+
+  // Executive KPI stats — derived only from real submitted data (every stored response is, by
+  // definition, a completed submission, so completion rate reflects forms that received at least one).
   const kpis = useMemo(() => {
     const totalResp = filteredData.responses.length;
-    const avgSeconds = totalResp > 0 
-      ? Math.round(filteredData.responses.reduce((acc, r) => acc + (r.completionTimeSeconds || 120), 0) / totalResp)
-      : 180;
-    
-    // Calculated completion rate based on form responses
-    const completionRate = totalResp > 0 ? 94.6 : 0;
+    const avgSeconds = totalResp > 0
+      ? Math.round(filteredData.responses.reduce((acc, r) => acc + (r.completionTimeSeconds || 0), 0) / totalResp)
+      : 0;
+    const formsWithResponses = new Set(filteredData.responses.map(r => r.formId)).size;
     const activeFormsCount = filteredData.forms.filter(f => f.status === 'published').length;
+    const responseCoverage = activeFormsCount > 0 ? Math.round((formsWithResponses / activeFormsCount) * 100) : 0;
 
     return {
       totalResp,
-      completionRate: `${completionRate}%`,
+      responseCoverage: `${responseCoverage}%`,
       avgTime: formatTimeSeconds(avgSeconds),
       activeFormsCount,
     };
   }, [filteredData]);
 
-  // Department breakdown data
+  // Department breakdown data — all real, computed from the filtered dataset.
   const departmentStats = useMemo(() => {
     const map: Record<string, { formsCount: number; responsesCount: number; sumTime: number }> = {};
 
-    forms.forEach(f => {
+    filteredData.forms.forEach(f => {
       const dept = f.department || 'General';
       if (!map[dept]) map[dept] = { formsCount: 0, responsesCount: 0, sumTime: 0 };
       map[dept].formsCount += 1;
-      map[dept].responsesCount += (f.responseCount || 0);
     });
 
-    responses.forEach(r => {
-      const form = forms.find(f => f.id === r.formId);
-      const dept = form?.department || 'General';
-      if (map[dept]) {
-        map[dept].sumTime += (r.completionTimeSeconds || 120);
-      }
+    filteredData.responses.forEach(r => {
+      const form = filteredData.forms.find(f => f.id === r.formId);
+      const dept = form?.department || r.respondentDepartment || 'General';
+      if (!map[dept]) map[dept] = { formsCount: 0, responsesCount: 0, sumTime: 0 };
+      map[dept].responsesCount += 1;
+      map[dept].sumTime += (r.completionTimeSeconds || 0);
     });
 
-    return Object.entries(map).map(([dept, data]) => ({
-      department: dept,
-      formsCount: data.formsCount,
-      responsesCount: data.responsesCount,
-      avgTime: data.responsesCount > 0 ? formatTimeSeconds(Math.round(data.sumTime / data.responsesCount)) : '2m 15s',
-      efficiency: '96%',
-    }));
-  }, [forms, responses]);
+    return Object.entries(map)
+      .map(([dept, data]) => ({
+        department: dept,
+        formsCount: data.formsCount,
+        responsesCount: data.responsesCount,
+        avgTime: data.responsesCount > 0 ? formatTimeSeconds(Math.round(data.sumTime / data.responsesCount)) : '—',
+      }))
+      .sort((a, b) => b.responsesCount - a.responsesCount);
+  }, [filteredData]);
 
-  // Trend data points (Simulated daily trend for line chart)
-  const trendData = [
-    { day: 'Lun', val: 18 },
-    { day: 'Mar', val: 32 },
-    { day: 'Mié', val: 45 },
-    { day: 'Jue', val: 58 },
-    { day: 'Vie', val: 74 },
-    { day: 'Sáb', val: 12 },
-    { day: 'Dom', val: 8 },
-  ];
-  const maxTrendVal = Math.max(...trendData.map(d => d.val));
+  // Donut chart geometry for the department distribution (r=14 circle, circumference ≈ 87.96).
+  const DONUT_PALETTE = ['#1D4ED8', '#10B981', '#F59E0B', '#6366F1', '#F43F5E', '#64748B'];
+  const totalDeptResponses = departmentStats.reduce((acc, d) => acc + d.responsesCount, 0);
+  const donutSegments = useMemo(() => {
+    let cumulativePct = 0;
+    return departmentStats
+      .filter(d => d.responsesCount > 0)
+      .slice(0, 6)
+      .map((d, i) => {
+        const pct = totalDeptResponses > 0 ? (d.responsesCount / totalDeptResponses) * 100 : 0;
+        const segment = {
+          department: d.department,
+          pct,
+          color: DONUT_PALETTE[i % DONUT_PALETTE.length],
+          arcLength: (pct / 100) * 87.96,
+          dashOffset: -(cumulativePct / 100) * 87.96,
+        };
+        cumulativePct += pct;
+        return segment;
+      });
+  }, [departmentStats, totalDeptResponses]);
+
+  const handleExportBreakdown = () => {
+    if (departmentStats.length === 0) {
+      showToast('No hay datos para exportar con los filtros actuales.', 'info');
+      return;
+    }
+    exportTableToCSV(
+      'desglose_por_direccion',
+      ['Dirección o Departamento', 'Formularios Creados', 'Respuestas Obtenidas', 'Tiempo Promedio'],
+      departmentStats.map(r => [r.department, r.formsCount, r.responsesCount, r.avgTime]),
+    );
+    showToast('Desglose exportado a CSV', 'success');
+  };
+
+  // Real weekly trend: count of responses submitted on each of the last 7 days.
+  const WEEKDAY_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  const trendData = useMemo(() => {
+    const days: { day: string; date: string; val: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateKey = d.toISOString().slice(0, 10);
+      const count = filteredData.responses.filter(r => r.submittedAt?.slice(0, 10) === dateKey).length;
+      days.push({ day: WEEKDAY_LABELS[d.getDay()], date: dateKey, val: count });
+    }
+    return days;
+  }, [filteredData]);
+  const totalTrendResponses = trendData.reduce((acc, d) => acc + d.val, 0);
+  const maxTrendVal = Math.max(1, ...trendData.map(d => d.val));
 
   return (
     <div className="space-y-6">
@@ -123,7 +168,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           <div className="flex items-center gap-2 text-xs font-semibold text-blue-700 uppercase tracking-wider mb-1">
             <span>Inteligencia Operacional</span>
             <span>·</span>
-            <span className="text-slate-500">Actualizado hoy a las 11:28 hrs</span>
+            <span className="text-slate-500">Actualizado al {new Date().toLocaleString('es-GT', { dateStyle: 'medium', timeStyle: 'short' })}</span>
           </div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">
             Dashboard Ejecutivo de Reportes
@@ -188,8 +233,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           >
             <option value="7_days">Últimos 7 días</option>
             <option value="30_days">Últimos 30 días</option>
-            <option value="quarter">Trimestre actual (Q1 2026)</option>
-            <option value="year">Histórico anual 2026</option>
+            <option value="90_days">Últimos 90 días</option>
+            <option value="all_time">Histórico completo</option>
           </select>
         </div>
 
@@ -201,10 +246,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-600"
           >
             <option value="all">Todas las Direcciones / Deptos.</option>
-            <option value="Recursos Humanos">Recursos Humanos</option>
-            <option value="Finanzas">Finanzas y Presupuesto</option>
-            <option value="Tecnología">Tecnología e Informática</option>
-            <option value="Atención Ciudadana">Atención Ciudadana</option>
+            {Array.from(new Set(forms.map(f => f.department).filter(Boolean))).map(dept => (
+              <option key={dept} value={dept}>{dept}</option>
+            ))}
           </select>
         </div>
 
@@ -234,25 +278,23 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           <div className="text-2xl font-bold text-slate-900 font-mono tabular-nums mb-1">
             {kpis.totalResp}
           </div>
-          <div className="text-[11px] text-emerald-600 font-medium flex items-center gap-1">
-            <span>+18.4%</span>
-            <span className="text-slate-400 font-normal">respecto al periodo anterior</span>
+          <div className="text-[11px] text-slate-400 font-normal">
+            Respuestas dentro del período filtrado
           </div>
         </div>
 
         <div className="bg-white rounded-xl border border-slate-200/80 p-5 shadow-xs">
           <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">Tasa de Finalización</span>
+            <span className="text-xs font-medium">Cobertura de Formularios</span>
             <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700">
               <CheckCircle2 className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-bold text-slate-900 font-mono tabular-nums mb-1">
-            {kpis.completionRate}
+            {kpis.responseCoverage}
           </div>
-          <div className="text-[11px] text-emerald-600 font-medium flex items-center gap-1">
-            <span>Excelente</span>
-            <span className="text-slate-400 font-normal">baja tasa de abandono</span>
+          <div className="text-[11px] text-slate-400 font-normal">
+            Formularios publicados con al menos una respuesta
           </div>
         </div>
 
@@ -294,25 +336,25 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="font-bold text-sm text-slate-900">Tendencia Semanal de Recepción</h3>
-              <p className="text-xs text-slate-500">Distribución de respuestas en los últimos 7 días</p>
+              <p className="text-xs text-slate-500">Respuestas recibidas por día, últimos 7 días</p>
             </div>
             <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
-              247 envíos
+              {totalTrendResponses} envíos
             </span>
           </div>
 
           {/* SVG Bar Chart with subtle hover */}
           <div className="h-52 flex items-end justify-between gap-3 pt-4 border-b border-slate-200">
-            {trendData.map((d, i) => {
+            {trendData.map((d) => {
               const heightPct = Math.round((d.val / maxTrendVal) * 100);
               return (
-                <div key={d.day} className="flex-1 flex flex-col items-center justify-end h-full group">
+                <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full group">
                   <span className="text-[11px] font-mono tabular-nums font-semibold text-slate-600 mb-1 group-hover:text-blue-700">
                     {d.val}
                   </span>
                   <div
                     className="w-full bg-blue-600 group-hover:bg-blue-700 rounded-t transition-all duration-200"
-                    style={{ height: `${heightPct}%` }}
+                    style={{ height: d.val > 0 ? `${heightPct}%` : '2px' }}
                   />
                   <span className="text-xs font-medium text-slate-600 mt-2">
                     {d.day}
@@ -322,70 +364,52 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             })}
           </div>
           <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2">
-            <span>Lunes 24 de marzo</span>
-            <span>Domingo 30 de marzo</span>
+            <span>{trendData[0] && formatDateSpanish(trendData[0].date)}</span>
+            <span>{trendData[6] && formatDateSpanish(trendData[6].date)}</span>
           </div>
         </div>
 
-        {/* Channel / Category SVG Pie / Donut Breakdown */}
+        {/* Department distribution donut — built from real response counts per department */}
         <div className="bg-white rounded-xl border border-slate-200/80 p-5 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <div>
-              <h3 className="font-bold text-sm text-slate-900">Distribución por Canal de Ingreso</h3>
-              <p className="text-xs text-slate-500">Proporción de envíos según origen tecnológico</p>
+              <h3 className="font-bold text-sm text-slate-900">Distribución por Dirección</h3>
+              <p className="text-xs text-slate-500">Proporción de respuestas recibidas por departamento</p>
             </div>
             <PieChart className="w-4 h-4 text-slate-400" />
           </div>
 
-          <div className="flex items-center justify-around py-4">
-            {/* SVG Donut */}
-            <div className="relative w-36 h-36">
-              <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
-                {/* Background ring */}
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#F1F5F9" strokeWidth="4" />
-                {/* Segment 1: Portal Web (56%) */}
-                <circle
-                  cx="18" cy="18" r="14" fill="none" stroke="#1D4ED8" strokeWidth="4"
-                  strokeDasharray="49.2 100" strokeDashoffset="0"
-                />
-                {/* Segment 2: Móvil / QR (30%) */}
-                <circle
-                  cx="18" cy="18" r="14" fill="none" stroke="#10B981" strokeWidth="4"
-                  strokeDasharray="26.3 100" strokeDashoffset="-49.2"
-                />
-                {/* Segment 3: Ventanilla (14%) */}
-                <circle
-                  cx="18" cy="18" r="14" fill="none" stroke="#F59E0B" strokeWidth="4"
-                  strokeDasharray="12.3 100" strokeDashoffset="-75.5"
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-xs font-bold text-slate-900">Total</span>
-                <span className="text-[11px] text-slate-500 font-mono">100%</span>
+          {donutSegments.length === 0 ? (
+            <div className="py-10 text-center text-xs text-slate-400">Aún no hay respuestas para graficar.</div>
+          ) : (
+            <div className="flex items-center justify-around py-4">
+              <div className="relative w-36 h-36">
+                <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                  <circle cx="18" cy="18" r="14" fill="none" stroke="#F1F5F9" strokeWidth="4" />
+                  {donutSegments.map(seg => (
+                    <circle
+                      key={seg.department}
+                      cx="18" cy="18" r="14" fill="none" stroke={seg.color} strokeWidth="4"
+                      strokeDasharray={`${seg.arcLength} 100`} strokeDashoffset={seg.dashOffset}
+                    />
+                  ))}
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-xs font-bold text-slate-900">Total</span>
+                  <span className="text-[11px] text-slate-500 font-mono">{totalDeptResponses}</span>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                {donutSegments.map(seg => (
+                  <div key={seg.department} className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: seg.color }}></span>
+                    <span className="text-slate-700 truncate max-w-[160px]">{seg.department}: <strong>{Math.round(seg.pct)}%</strong></span>
+                  </div>
+                ))}
               </div>
             </div>
-
-            {/* Legend */}
-            <div className="space-y-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-blue-700 shrink-0"></span>
-                <span className="text-slate-700">Portal Web Institucional: <strong>56%</strong></span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-emerald-600 shrink-0"></span>
-                <span className="text-slate-700">Enlace Móvil / QR: <strong>30%</strong></span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-amber-500 shrink-0"></span>
-                <span className="text-slate-700">Ventanilla Asistida: <strong>14%</strong></span>
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-3 border-t border-slate-100 text-[11px] text-slate-500 flex justify-between">
-            <span>Mayor adherencia: <strong>Portal Web</strong></span>
-            <span className="text-emerald-600 font-medium">Cumplimiento de metas</span>
-          </div>
+          )}
         </div>
       </div>
 
@@ -397,7 +421,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             <p className="text-xs text-slate-500">Métricas cruzadas de formularios y tiempos de atención</p>
           </div>
           <button
-            onClick={() => showToast('Exportando tabla cruzada a Excel...', 'info')}
+            onClick={handleExportBreakdown}
             className="text-xs font-semibold text-blue-700 hover:text-blue-900 flex items-center gap-1"
           >
             <FileSpreadsheet className="w-3.5 h-3.5" /> Exportar desglose
@@ -412,10 +436,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 <th className="py-3 px-4 text-center">Formularios Creados</th>
                 <th className="py-3 px-4 text-right">Respuestas Obtenidas</th>
                 <th className="py-3 px-4 text-center">Tiempo Promedio</th>
-                <th className="py-3 px-4 text-right">Tasa Cumplimiento</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
+              {departmentStats.length === 0 && (
+                <tr><td colSpan={4} className="py-6 text-center text-slate-400">No hay datos con los filtros actuales.</td></tr>
+              )}
               {departmentStats.map((row) => (
                 <tr key={row.department} className="hover:bg-slate-50 transition-colors">
                   <td className="py-3 px-4 font-semibold text-slate-900">
@@ -429,9 +455,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   </td>
                   <td className="py-3 px-4 text-center font-mono text-slate-500">
                     {row.avgTime}
-                  </td>
-                  <td className="py-3 px-4 text-right font-mono text-emerald-700 font-semibold">
-                    {row.efficiency}
                   </td>
                 </tr>
               ))}

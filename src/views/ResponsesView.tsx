@@ -21,7 +21,7 @@ import {
   MessageSquare 
 } from 'lucide-react';
 import { Form, FormResponse } from '../types';
-import { formatDateSpanish, formatTimeSeconds, exportResponsesToCSV, exportResponsesToExcel } from '../utils/helpers';
+import { formatDateSpanish, formatTimeSeconds, exportResponsesToCSV, exportResponsesToExcel, formatAnswerForExport } from '../utils/helpers';
 
 interface ResponsesViewProps {
   forms: Form[];
@@ -50,10 +50,11 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
 
   // Filter responses belonging to current form
   const formResponses = useMemo(() => {
+    if (!currentForm) return [];
     return responses.filter(r => r.formId === currentForm.id);
   }, [responses, currentForm]);
 
-  const isAccepting = currentForm.status === 'published';
+  const isAccepting = currentForm?.status === 'published';
 
   // Table filtering and sorting
   const filteredResponses = useMemo(() => {
@@ -185,6 +186,16 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
     exportResponsesToExcel(currentForm, formResponses);
     showToast('Planilla Excel descargada con éxito', 'success');
   };
+
+  if (!currentForm) {
+    return (
+      <div className="bg-white rounded-xl border border-slate-200/80 p-10 text-center">
+        <Inbox className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">Aún no hay formularios</h3>
+        <p className="text-xs text-slate-500">Cree un formulario para empezar a recibir y consultar respuestas.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -407,7 +418,7 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
                       </div>
                       {(qa.samples || []).map((sample: any, sIdx: number) => (
                         <div key={sIdx} className="p-2.5 bg-slate-50 rounded-lg text-xs text-slate-700 italic border border-slate-100">
-                          "{String(sample)}"
+                          "{formatAnswerForExport(qa.field, sample)}"
                         </div>
                       ))}
                       {(qa.samples || []).length === 0 && (
@@ -503,9 +514,10 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
                     </td>
                     {currentForm.fields.filter(f => f.type !== 'section').slice(0, 3).map(f => {
                       const val = r.answers[f.id];
+                      const isFile = val && typeof val === 'object' && 'dataUrl' in val;
                       return (
                         <td key={f.id} className="py-3 px-4 truncate max-w-[200px] text-slate-600">
-                          {val === undefined || val === null ? '-' : typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                          {val === undefined || val === null ? '-' : isFile ? `📎 ${(val as any).name}` : typeof val === 'object' ? JSON.stringify(val) : String(val)}
                         </td>
                       );
                     })}
@@ -600,6 +612,17 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
                               <li key={i}>{item}</li>
                             ))}
                           </ul>
+                        ) : field.type === 'file_upload' && typeof answer === 'object' && 'dataUrl' in answer ? (
+                          <a
+                            href={(answer as any).dataUrl}
+                            download={(answer as any).name}
+                            className="inline-flex items-center gap-1.5 text-blue-700 hover:text-blue-900 font-semibold"
+                          >
+                            📎 {(answer as any).name}
+                            <span className="text-slate-400 font-normal">({(((answer as any).size || 0) / 1024).toFixed(0)} KB)</span>
+                          </a>
+                        ) : field.type === 'guatemala_location' && typeof answer === 'object' && 'department' in answer ? (
+                          <span>{(answer as any).municipality}, {(answer as any).department}</span>
                         ) : typeof answer === 'object' ? (
                           <div className="space-y-1 text-xs">
                             {Object.entries(answer).map(([k, v]) => (
