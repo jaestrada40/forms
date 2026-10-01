@@ -1,45 +1,56 @@
 import React, { useState } from 'react';
-import { 
-  ArrowLeft, 
-  Save, 
-  Eye, 
-  Share2, 
-  Globe, 
-  Check, 
-  Plus, 
-  Trash2, 
-  Copy, 
-  ChevronUp, 
-  ChevronDown, 
-  GripVertical, 
-  Type, 
-  AlignLeft, 
-  Hash, 
-  Mail, 
-  Phone, 
-  Calendar, 
-  Clock, 
-  CheckSquare, 
-  CircleDot, 
-  ListOrdered, 
-  Sliders, 
-  Grid, 
-  Upload, 
-  Divide, 
-  Settings2, 
-  Palette, 
-  FileText, 
+import {
+  ArrowLeft,
+  Save,
+  Eye,
+  Share2,
+  Globe,
+  Check,
+  Plus,
+  Trash2,
+  Copy,
+  ChevronUp,
+  ChevronDown,
+  GripVertical,
+  Type,
+  AlignLeft,
+  Hash,
+  Mail,
+  Phone,
+  Calendar,
+  Clock,
+  CheckSquare,
+  CircleDot,
+  ListOrdered,
+  Sliders,
+  Grid,
+  Upload,
+  Divide,
+  Settings2,
+  Palette,
+  FileText,
   HelpCircle,
   ToggleLeft,
   ToggleRight,
   AlertCircle,
-  ExternalLink
+  ExternalLink,
+  Loader2,
+  CloudUpload,
+  IdCard,
+  Receipt,
+  MapPin,
+  Sparkles
 } from 'lucide-react';
 import { Form, FormField, FormFieldType, FormDesign, FormSettings } from '../types';
+import { PRESET_FIELDS } from '../data/presetFields';
+import { GUATEMALA_DEPARTMENT_NAMES } from '../data/guatemalaLocations';
+
+export type FormSaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 interface FormBuilderProps {
   form: Form;
   onUpdateForm: (updated: Form) => void;
+  saveStatus: FormSaveStatus;
   onBack: () => void;
   onShowPublicView: (formId: string) => void;
   onOpenShareModal: (form: Form) => void;
@@ -47,17 +58,45 @@ interface FormBuilderProps {
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
+const SaveStatusBadge: React.FC<{ status: FormSaveStatus }> = ({ status }) => {
+  if (status === 'saving') {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-[11px] font-semibold border border-amber-200">
+        <Loader2 className="w-3 h-3 animate-spin" />
+        Guardando cambios…
+      </span>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold border border-rose-200">
+        <AlertCircle className="w-3 h-3" />
+        No se pudo guardar
+      </span>
+    );
+  }
+  return (
+    <span key={status === 'saved' ? 'saved-flash' : 'idle'} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200 animate-in fade-in zoom-in-95 duration-200">
+      <Check className="w-3 h-3" />
+      Todos los cambios guardados
+    </span>
+  );
+};
+
 const FIELD_CATALOG: { type: FormFieldType; label: string; icon: any; category: 'Texto' | 'Opciones' | 'Avanzados' }[] = [
   { type: 'short_text', label: 'Texto corto', icon: Type, category: 'Texto' },
   { type: 'paragraph', label: 'Párrafo', icon: AlignLeft, category: 'Texto' },
   { type: 'number', label: 'Número', icon: Hash, category: 'Texto' },
   { type: 'email', label: 'Correo institucional', icon: Mail, category: 'Texto' },
   { type: 'phone', label: 'Teléfono', icon: Phone, category: 'Texto' },
+  { type: 'dpi', label: 'DPI', icon: IdCard, category: 'Texto' },
+  { type: 'nit', label: 'NIT', icon: Receipt, category: 'Texto' },
   { type: 'date', label: 'Fecha', icon: Calendar, category: 'Texto' },
   { type: 'time', label: 'Hora', icon: Clock, category: 'Texto' },
   { type: 'single_choice', label: 'Selección única', icon: CircleDot, category: 'Opciones' },
   { type: 'multiple_choice', label: 'Selección múltiple', icon: CheckSquare, category: 'Opciones' },
   { type: 'dropdown', label: 'Lista desplegable', icon: ListOrdered, category: 'Opciones' },
+  { type: 'guatemala_location', label: 'Departamento y Municipio', icon: MapPin, category: 'Avanzados' },
   { type: 'linear_scale', label: 'Escala lineal', icon: Sliders, category: 'Avanzados' },
   { type: 'matrix', label: 'Matriz de cuadrícula', icon: Grid, category: 'Avanzados' },
   { type: 'file_upload', label: 'Carga de archivo', icon: Upload, category: 'Avanzados' },
@@ -67,6 +106,7 @@ const FIELD_CATALOG: { type: FormFieldType; label: string; icon: any; category: 
 export const FormBuilder: React.FC<FormBuilderProps> = ({
   form,
   onUpdateForm,
+  saveStatus,
   onBack,
   onShowPublicView,
   onOpenShareModal,
@@ -77,7 +117,6 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(
     form.fields.length > 0 ? form.fields[0].id : null
   );
-  const [autoSaveStatus, setAutoSaveStatus] = useState<string>('Guardado en la nube');
 
   const selectedField = form.fields.find(f => f.id === selectedFieldId) || null;
 
@@ -87,23 +126,54 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
       ...newForm,
       updatedAt: new Date().toISOString()
     });
-    setAutoSaveStatus('Guardando cambios...');
-    setTimeout(() => {
-      setAutoSaveStatus('Guardado en la nube');
-    }, 600);
   };
 
   // Add field
   const handleAddField = (type: FormFieldType) => {
     const id = `field_${Date.now()}`;
+    const defaultTitles: Partial<Record<FormFieldType, string>> = {
+      section: 'Nueva Sección',
+      dpi: 'Número de DPI (CUI)',
+      nit: 'NIT',
+      guatemala_location: 'Departamento y Municipio de residencia',
+    };
+
     const newField: FormField = {
       id,
       type,
-      title: type === 'section' ? 'Nueva Sección' : 'Pregunta sin título',
+      title: defaultTitles[type] || 'Pregunta sin título',
       required: type !== 'section',
       description: '',
       placeholder: '',
     };
+
+    if (type === 'phone') {
+      newField.placeholder = '+502 ';
+      newField.validation = {
+        minLength: 8,
+        maxLength: 8,
+        regexPattern: '^[0-9]{8}$',
+        customErrorMessage: 'Ingrese un número de teléfono válido de 8 dígitos.',
+      };
+    }
+
+    if (type === 'dpi') {
+      newField.placeholder = '1234567890101';
+      newField.validation = {
+        minLength: 13,
+        maxLength: 13,
+        regexPattern: '^[0-9]{13}$',
+        customErrorMessage: 'El DPI debe tener 13 dígitos numéricos. No se verifica contra RENAP.',
+      };
+    }
+
+    if (type === 'nit') {
+      newField.placeholder = '12345678-9';
+      newField.validation = {
+        regexPattern: '^[0-9]{1,8}-?[0-9Kk]$',
+        customErrorMessage: 'Formato de NIT no válido (ej. 12345678-9). No se verifica contra la SAT.',
+      };
+    }
 
     if (type === 'single_choice' || type === 'multiple_choice' || type === 'dropdown') {
       newField.options = ['Opción 1', 'Opción 2', 'Opción 3'];
@@ -117,6 +187,25 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
       newField.matrixColumns = ['Deficiente', 'Aceptable', 'Excelente'];
     }
 
+    const updatedFields = [...form.fields, newField];
+    updateFormState({ ...form, fields: updatedFields });
+    setSelectedFieldId(id);
+    showToast(`Campo "${newField.title}" agregado`, 'info');
+  };
+
+  // Add a predefined question (autoidentificación, comunidad lingüística, sexo, discapacidad...)
+  const handleAddPresetField = (presetId: string) => {
+    const preset = PRESET_FIELDS.find(p => p.id === presetId);
+    if (!preset) return;
+    const id = `field_${Date.now()}`;
+    const newField: FormField = {
+      id,
+      type: 'dropdown',
+      title: preset.title,
+      required: true,
+      description: '',
+      options: [...preset.options],
+    };
     const updatedFields = [...form.fields, newField];
     updateFormState({ ...form, fields: updatedFields });
     setSelectedFieldId(id);
@@ -198,12 +287,10 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
               className="font-bold text-slate-900 text-sm sm:text-base bg-transparent border border-transparent hover:border-slate-300 focus:border-blue-600 focus:bg-white rounded px-2 py-0.5 truncate max-w-xs sm:max-w-md focus:outline-hidden"
               placeholder="Nombre del formulario"
             />
-            <div className="flex items-center gap-2 px-2 text-[11px] text-slate-500">
-              <span className="flex items-center gap-1 text-emerald-600 font-medium">
-                <Check className="w-3 h-3" /> {autoSaveStatus}
-              </span>
-              <span>·</span>
-              <span className="capitalize">{form.status === 'published' ? 'Publicado' : form.status === 'draft' ? 'Borrador' : 'Cerrado'}</span>
+            <div className="flex items-center gap-2 px-2 mt-1">
+              <SaveStatusBadge status={saveStatus} />
+              <span className="text-[11px] text-slate-400">·</span>
+              <span className="text-[11px] text-slate-500 capitalize">{form.status === 'published' ? 'Publicado' : form.status === 'draft' ? 'Borrador' : 'Cerrado'}</span>
             </div>
           </div>
         </div>
@@ -265,10 +352,29 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
 
           <button
             onClick={() => onOpenPublishModal(form)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+            title="Cambiar el estado del formulario (borrador, publicado o cerrado)"
+            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold shadow-xs transition-colors ${
+              form.status === 'published' || form.status === 'closed'
+                ? 'bg-white border border-slate-300 hover:bg-slate-50 text-slate-700'
+                : 'bg-blue-700 hover:bg-blue-800 text-white'
+            }`}
           >
-            <Globe className="w-3.5 h-3.5" />
-            <span>{form.status === 'published' ? 'Gestionar' : 'Publicar'}</span>
+            {form.status === 'published' ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span>Estado: Publicado</span>
+              </>
+            ) : form.status === 'closed' ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                <span>Estado: Cerrado</span>
+              </>
+            ) : (
+              <>
+                <Globe className="w-3.5 h-3.5" />
+                <span>Publicar</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -310,6 +416,26 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   </div>
                 </div>
               ))}
+
+              <div>
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 px-1 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-amber-500" />
+                  Preguntas Predefinidas
+                </div>
+                <div className="grid grid-cols-1 gap-1">
+                  {PRESET_FIELDS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      onClick={() => handleAddPresetField(preset.id)}
+                      title={`Agrega el campo con las ${preset.options.length} opciones oficiales ya cargadas`}
+                      className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs text-slate-700 hover:bg-amber-50 hover:text-amber-800 border border-transparent hover:border-amber-200 transition-all text-left group"
+                    >
+                      <Sparkles className="w-4 h-4 text-slate-400 group-hover:text-amber-600 shrink-0" />
+                      <span className="font-medium">{preset.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </aside>
 
@@ -492,9 +618,22 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                         </div>
                       )}
 
-                      {(field.type === 'email' || field.type === 'phone') && (
+                      {(field.type === 'email' || field.type === 'phone' || field.type === 'dpi' || field.type === 'nit') && (
                         <div className="h-8 border border-dashed border-slate-300 rounded-lg bg-slate-50 px-3 flex items-center text-xs text-slate-400">
-                          {field.type === 'email' ? 'nombre@gobierno.cl' : '+56 9 1234 5678'}
+                          {field.placeholder || (field.type === 'email' ? 'nombre@gobierno.cl' : field.type === 'phone' ? '+502 ' : field.type === 'dpi' ? '1234567890101' : '12345678-9')}
+                        </div>
+                      )}
+
+                      {field.type === 'guatemala_location' && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="h-8 border border-slate-300 rounded-lg bg-white px-3 flex items-center justify-between text-xs text-slate-600">
+                            <span>Departamento...</span>
+                            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                          </div>
+                          <div className="h-8 border border-slate-300 rounded-lg bg-white px-3 flex items-center justify-between text-xs text-slate-400">
+                            <span>Municipio...</span>
+                            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                          </div>
                         </div>
                       )}
 
@@ -564,7 +703,9 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                       {field.type === 'file_upload' && (
                         <div className="border border-dashed border-slate-300 rounded-lg p-3 text-center bg-slate-50 text-xs text-slate-500 flex items-center justify-center gap-2">
                           <Upload className="w-4 h-4 text-slate-400" />
-                          <span>Adjuntar documento o comprobante (máx. 10 MB)</span>
+                          <span>
+                            Formatos {(field.fileConfig?.allowedTypes || ['pdf', 'png', 'jpg']).join(', ').toUpperCase()} · máx. {field.fileConfig?.maxMb || 10} MB
+                          </span>
                         </div>
                       )}
                     </div>
@@ -729,22 +870,175 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   </div>
                 )}
 
-                {/* Validation and Placeholder */}
-                {(selectedField.type === 'short_text' || selectedField.type === 'paragraph' || selectedField.type === 'number') && (
-                  <div className="space-y-3 pt-2 border-t border-slate-200">
+                {/* Matrix Rows & Columns Editor */}
+                {selectedField.type === 'matrix' && (
+                  <div className="space-y-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
                     <div>
-                      <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1">
-                        Texto de marcador (Placeholder)
+                      <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">
+                        Filas (aspectos a evaluar)
                       </label>
-                      <input
-                        type="text"
-                        value={selectedField.placeholder || ''}
-                        onChange={(e) => handleUpdateSelectedField({ placeholder: e.target.value })}
-                        placeholder="Ej: Ingrese su respuesta aquí..."
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                      />
+                      <div className="space-y-1.5">
+                        {(selectedField.matrixRows || []).map((row, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={row}
+                              onChange={(e) => {
+                                const rows = [...(selectedField.matrixRows || [])];
+                                rows[idx] = e.target.value;
+                                handleUpdateSelectedField({ matrixRows: rows });
+                              }}
+                              className="flex-1 px-2.5 py-1 bg-white border border-slate-200 rounded-md text-xs focus:ring-2 focus:ring-blue-600"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const rows = (selectedField.matrixRows || []).filter((_, i) => i !== idx);
+                                handleUpdateSelectedField({ matrixRows: rows });
+                              }}
+                              className="p-1 text-slate-400 hover:text-rose-600"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const rows = [...(selectedField.matrixRows || []), `Fila ${(selectedField.matrixRows || []).length + 1}`];
+                          handleUpdateSelectedField({ matrixRows: rows });
+                        }}
+                        className="text-blue-700 hover:text-blue-900 font-semibold text-xs flex items-center gap-1 mt-1.5"
+                      >
+                        <Plus className="w-3 h-3" /> Añadir fila
+                      </button>
                     </div>
 
+                    <div className="pt-3 border-t border-slate-200">
+                      <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">
+                        Columnas (opciones de respuesta)
+                      </label>
+                      <div className="space-y-1.5">
+                        {(selectedField.matrixColumns || []).map((col, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={col}
+                              onChange={(e) => {
+                                const cols = [...(selectedField.matrixColumns || [])];
+                                cols[idx] = e.target.value;
+                                handleUpdateSelectedField({ matrixColumns: cols });
+                              }}
+                              className="flex-1 px-2.5 py-1 bg-white border border-slate-200 rounded-md text-xs focus:ring-2 focus:ring-blue-600"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const cols = (selectedField.matrixColumns || []).filter((_, i) => i !== idx);
+                                handleUpdateSelectedField({ matrixColumns: cols });
+                              }}
+                              className="p-1 text-slate-400 hover:text-rose-600"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cols = [...(selectedField.matrixColumns || []), `Columna ${(selectedField.matrixColumns || []).length + 1}`];
+                          handleUpdateSelectedField({ matrixColumns: cols });
+                        }}
+                        className="text-blue-700 hover:text-blue-900 font-semibold text-xs flex items-center gap-1 mt-1.5"
+                      >
+                        <Plus className="w-3 h-3" /> Añadir columna
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* File Upload Config */}
+                {selectedField.type === 'file_upload' && (
+                  <div className="space-y-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                    <div>
+                      <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">
+                        Extensiones permitidas
+                      </label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {['pdf', 'png', 'jpg', 'doc', 'docx', 'xlsx'].map(ext => {
+                          const allowed = selectedField.fileConfig?.allowedTypes || ['pdf', 'png', 'jpg'];
+                          const checked = allowed.includes(ext);
+                          return (
+                            <label key={ext} className="flex items-center gap-1.5 px-2 py-1 bg-white border border-slate-200 rounded-md cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  const next = checked ? allowed.filter(t => t !== ext) : [...allowed, ext];
+                                  handleUpdateSelectedField({
+                                    fileConfig: { allowedTypes: next, maxMb: selectedField.fileConfig?.maxMb || 10 },
+                                  });
+                                }}
+                                className="text-blue-600 focus:ring-blue-500"
+                              />
+                              <span className="uppercase">{ext}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1">
+                        Tamaño máximo (MB)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={selectedField.fileConfig?.maxMb || 10}
+                        onChange={(e) => {
+                          const maxMb = Number(e.target.value) || 10;
+                          handleUpdateSelectedField({
+                            fileConfig: { allowedTypes: selectedField.fileConfig?.allowedTypes || ['pdf', 'png', 'jpg'], maxMb },
+                          });
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
+                      />
+                      <p className="text-[11px] text-slate-500 mt-1">Límite recomendado: 10 MB por archivo.</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Placeholder (available on every free-text style field) */}
+                {(selectedField.type === 'short_text' || selectedField.type === 'paragraph' || selectedField.type === 'number' || selectedField.type === 'email' || selectedField.type === 'phone' || selectedField.type === 'dpi' || selectedField.type === 'nit') && (
+                  <div className="pt-2 border-t border-slate-200">
+                    <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1">
+                      Texto de marcador (Placeholder)
+                    </label>
+                    <input
+                      type="text"
+                      value={selectedField.placeholder || ''}
+                      onChange={(e) => handleUpdateSelectedField({ placeholder: e.target.value })}
+                      placeholder="Ej: Ingrese su respuesta aquí..."
+                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                    />
+                    {selectedField.type === 'phone' && (
+                      <p className="text-[11px] text-slate-500 mt-1">El teléfono siempre exige 8 dígitos numéricos.</p>
+                    )}
+                    {selectedField.type === 'dpi' && (
+                      <p className="text-[11px] text-slate-500 mt-1">Exige 13 dígitos numéricos (formato CUI). No se verifica contra RENAP.</p>
+                    )}
+                    {selectedField.type === 'nit' && (
+                      <p className="text-[11px] text-slate-500 mt-1">Formato: hasta 8 dígitos + guion + dígito verificador o "K" (ej. 12345678-9). No se verifica contra la SAT.</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Min/Max validation (text length or numeric range) */}
+                {(selectedField.type === 'short_text' || selectedField.type === 'paragraph' || selectedField.type === 'number') && (
+                  <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="text-[10px] font-semibold text-slate-600">

@@ -137,7 +137,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
               <div>
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 mb-4">
                   <span>{tpl.department}</span>
-                  <span className="font-mono tabular-nums">{tpl.fieldsCount} preguntas</span>
+                  <span className="font-mono tabular-nums">{(tpl.form.fields || []).filter(f => f.type !== 'section').length} preguntas</span>
                 </div>
 
                 <button

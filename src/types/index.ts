@@ -4,6 +4,8 @@ export type FormFieldType =
   | 'number'
   | 'email'
   | 'phone'
+  | 'dpi'
+  | 'nit'
   | 'date'
   | 'time'
   | 'single_choice'
@@ -12,6 +14,7 @@ export type FormFieldType =
   | 'linear_scale'
   | 'matrix'
   | 'file_upload'
+  | 'guatemala_location'
   | 'section';
 
 export interface FormFieldValidation {
@@ -128,6 +131,7 @@ export interface UserAccount {
   status: UserStatus;
   lastActive: string;
   initials: string;
+  mfaEnabled: boolean;
 }
 
 export type ActiveScreen =

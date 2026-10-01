@@ -21,6 +21,10 @@ interface SidebarProps {
   openNewFormModal: () => void;
   isMobileOpen: boolean;
   setIsMobileOpen: (open: boolean) => void;
+  currentUser: { name: string; role: string } | null;
+  onLogout: () => void;
+  branding?: { name: string; logoDataUrl: string | null } | null;
+  brandingLoaded?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -29,7 +33,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   formsCount,
   openNewFormModal,
   isMobileOpen,
-  setIsMobileOpen
+  setIsMobileOpen,
+  currentUser,
+  onLogout,
+  branding,
+  brandingLoaded
 }) => {
   interface NavItem {
     id: ActiveScreen;
@@ -68,16 +76,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
         {/* Brand Area */}
-        <div className="h-16 px-5 flex items-center justify-between border-b border-slate-800 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-              <ShieldCheck className="w-5 h-5" />
+        <div className="h-28 px-4 flex items-center justify-center border-b border-slate-800 shrink-0">
+          {!brandingLoaded ? (
+            <div className="w-4/5 h-16 rounded-md bg-slate-800 animate-pulse" />
+          ) : branding?.logoDataUrl ? (
+            <img src={branding.logoDataUrl} alt={branding.name} className="max-h-24 w-4/5 object-contain" />
+          ) : (
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-base font-bold text-white tracking-tight leading-none">Formularios</div>
+                <div className="text-[10px] text-slate-400 font-medium tracking-wider uppercase mt-1">Gestión Digital</div>
+              </div>
             </div>
-            <div>
-              <div className="text-base font-bold text-white tracking-tight leading-none">Formularios</div>
-              <div className="text-[10px] text-slate-400 font-medium tracking-wider uppercase mt-1">Gestión Digital</div>
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Primary CTA */}
@@ -126,14 +140,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="p-3 border-t border-slate-800 bg-slate-950/40">
           <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-800/60 transition-colors">
             <div className="w-9 h-9 rounded-full bg-blue-700 text-white flex items-center justify-center font-semibold text-xs shrink-0">
-              RM
+              {(currentUser?.name ?? 'US').split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-semibold text-white truncate">Lic. Roberto Morales</div>
-              <div className="text-[11px] text-slate-400 truncate">Administrador</div>
+              <div className="text-xs font-semibold text-white truncate">{currentUser?.name ?? 'Sesión'}</div>
+              <div className="text-[11px] text-slate-400 truncate">{currentUser?.role ?? ''}</div>
             </div>
-            <button 
+            <button
               title="Cerrar sesión"
+              onClick={onLogout}
               className="text-slate-500 hover:text-slate-300 p-1 rounded-md"
             >
               <LogOut className="w-4 h-4" />

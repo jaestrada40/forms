@@ -36,6 +36,22 @@ export function generateFolio(): string {
   return `FOR-${year}-${randomNum}`;
 }
 
+export function formatAnswerForExport(field: { type: string }, val: unknown): string {
+  if (val === undefined || val === null || val === '') return '';
+  if (field.type === 'file_upload' && typeof val === 'object' && val !== null && 'name' in val) {
+    return String((val as { name: unknown }).name);
+  }
+  if (field.type === 'guatemala_location' && typeof val === 'object' && val !== null && 'department' in val) {
+    const loc = val as { department?: string; municipality?: string };
+    return [loc.municipality, loc.department].filter(Boolean).join(', ');
+  }
+  if (Array.isArray(val)) return val.join(', ');
+  if (typeof val === 'object') {
+    return Object.entries(val as Record<string, unknown>).map(([k, v]) => `${k}: ${v}`).join(' | ');
+  }
+  return String(val);
+}
+
 export function exportResponsesToCSV(form: Form, responses: FormResponse[]) {
   // UTF-8 BOM so Excel recognizes accents correctly
   const BOM = '\uFEFF';
@@ -58,14 +74,7 @@ export function exportResponsesToCSV(form: Form, responses: FormResponse[]) {
     
     const fieldCols = form.fields
       .filter(f => f.type !== 'section')
-      .map(f => {
-        const val = resp.answers[f.id];
-        if (val === undefined || val === null) return '""';
-        if (typeof val === 'object') {
-          return `"${JSON.stringify(val).replace(/"/g, '""')}"`;
-        }
-        return `"${String(val).replace(/"/g, '""')}"`;
-      });
+      .map(f => `"${formatAnswerForExport(f, resp.answers[f.id]).replace(/"/g, '""')}"`);
     
     return [...baseCols, ...fieldCols].join(';');
   });
@@ -79,6 +88,21 @@ export function exportResponsesToCSV(form: Form, responses: FormResponse[]) {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+}
+
+export function exportTableToCSV(filename: string, headers: string[], rows: (string | number)[][]) {
+  const BOM = '﻿';
+  const escape = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+  const csvContent = BOM + [headers.map(escape).join(';'), ...rows.map(r => r.map(escape).join(';'))].join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', `${filename}_${new Date().toISOString().slice(0, 10)}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export function exportResponsesToExcel(form: Form, responses: FormResponse[]) {
@@ -109,14 +133,7 @@ export function exportResponsesToExcel(form: Form, responses: FormResponse[]) {
       <td>${resp.completionTimeSeconds}</td>
       <td>${resp.respondentEmail || 'Anónimo'}</td>
       <td>${resp.respondentDepartment || 'No especificado'}</td>
-      ${fields.map(f => {
-        const val = resp.answers[f.id];
-        if (val === undefined || val === null) return '<td>-</td>';
-        if (typeof val === 'object') {
-          return `<td>${JSON.stringify(val)}</td>`;
-        }
-        return `<td>${String(val)}</td>`;
-      }).join('')}
+      ${fields.map(f => `<td>${formatAnswerForExport(f, resp.answers[f.id]) || '-'}</td>`).join('')}
     </tr>`;
   });
 
