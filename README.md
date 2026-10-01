@@ -1,12 +1,6 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
-
 # Sistema de Formularios Institucionales
 
 Aplicación para crear formularios, recibir respuestas y consultar reportes. La interfaz React funciona como prototipo y la carpeta `server/` contiene la primera API funcional con PostgreSQL, JWT, roles y auditoría.
-
-View your app in AI Studio: https://ai.studio/apps/91c59569-7b23-42b6-8096-54412c347e78
 
 ## Ejecutar localmente
 
