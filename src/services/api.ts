@@ -46,7 +46,8 @@ async function request<T>(path: string, init: RequestInit = {}, bearerToken?: st
   }
   if (response.status === 204) return undefined as T;
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.message || 'No fue posible completar la solicitud.');
+  // `code` lets callers react to specific failures (for example a duplicate e-mail) without parsing the text
+  if (!response.ok) throw Object.assign(new Error(body.message || 'No fue posible completar la solicitud.'), { code: body.code as string | undefined });
   return body as T;
 }
 
