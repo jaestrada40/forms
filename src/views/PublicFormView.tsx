@@ -21,6 +21,19 @@ import { Form, FormCaptcha, FormField, FormResponse } from '../types';
 import { formatDateSpanish } from '../utils/helpers';
 import { GUATEMALA_DEPARTMENTS, GUATEMALA_DEPARTMENT_NAMES } from '../data/guatemalaLocations';
 
+// Remembers in this browser that the form was answered, so a reload does not offer the form again.
+// It is a convenience only: the server is what enforces one response per e-mail.
+const respondedKey = (formId: string) => `formularios_responded_${formId}`;
+function readResponded(formId: string): { folio: string; at: string } | null {
+  try {
+    const raw = localStorage.getItem(respondedKey(formId));
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function rememberResponded(formId: string, folio: string, at: string) {
+  try { localStorage.setItem(respondedKey(formId), JSON.stringify({ folio, at })); } catch { /* storage unavailable */ }
+}
+
 /** Anti-spam fields that travel with the response but are not part of it. */
 export interface SubmitExtra {
   captchaToken?: string;
@@ -54,6 +67,8 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [contactEmail, setContactEmail] = useState('');
   const [honeypot, setHoneypot] = useState('');
+  // Public link only (the admin preview must stay testable); only for forms limited to one response
+  const [alreadyResponded] = useState(() => (form.settings.limitOneResponsePerUser && !onExitToAdmin ? readResponded(form.id) : null));
   const [challenge, setChallenge] = useState<{ question: string; token: string } | null>(null);
   const [challengeAnswer, setChallengeAnswer] = useState('');
   const captchaInfo = captchaOverride !== undefined ? captchaOverride : form.captcha;
@@ -73,6 +88,9 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
   const requiresEmail = !!(form.settings.collectEmails || form.settings.limitOneResponsePerUser);
 
   // Group fields into sections
+  // Hooks must run on every render, including the confirmation screen that returns early below
+  useFormFonts(form.design, form.fields);
+
   const sections = useMemo(() => {
     const list: { title: string; description?: string; fields: FormField[] }[] = [];
     let current = {
@@ -266,7 +284,19 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
       });
       setSubmittedFolio(saved.folio);
       setSubmittedAt(saved.submittedAt);
+      if (form.settings.limitOneResponsePerUser && !onExitToAdmin) rememberResponded(form.id, saved.folio, saved.submittedAt);
     } catch (err) {
+      if ((err as { code?: string }).code === 'duplicate_email') {
+        // Show the problem on the e-mail field itself and take the person there
+        setSubmitError(null);
+        setErrors(prev => ({ ...prev, __email: (err as Error).message }));
+        setCurrentSectionIndex(emailSection);
+        setTimeout(() => {
+          document.getElementById('email-field')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          document.getElementById('contact-email-input')?.focus();
+        }, 80);
+        return;
+      }
       setSubmitError(err instanceof Error ? err.message : 'No fue posible enviar su respuesta. Intente nuevamente.');
       if (captchaEnabled) loadChallenge(); // each challenge can be answered only once
       if (externalCaptcha) setCaptchaReset(n => n + 1); // provider tokens are single-use too
@@ -345,15 +375,42 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
     );
   }
 
+  // Same browser already answered this single-response form: do not offer it again
+  if (alreadyResponded) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-4 sm:p-6">
+        <div className="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden text-center p-8 sm:p-10">
+          <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-5 shadow-inner">
+            <CheckCircle2 className="w-10 h-10" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Ya respondió este formulario</h2>
+          <p className="text-xs text-slate-600 mb-6 leading-relaxed">
+            «{form.title}» admite una sola respuesta por persona y ya recibimos la suya desde este navegador.
+          </p>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-left space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500">Folio de su respuesta:</span>
+              <span className="font-mono font-bold text-slate-900 text-sm">{alreadyResponded.folio}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500">Fecha y hora de ingreso:</span>
+              <span className="font-medium text-slate-700">{formatDateSpanish(alreadyResponded.at, true)}</span>
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-4">Si necesita corregir su respuesta, comuníquese con la institución indicando este folio.</p>
+        </div>
+      </div>
+    );
+  }
+
   const theme = getFormTheme(form.design);
   const submitButton = getSubmitButton(form.design);
-  useFormFonts(form.design, form.fields);
 
   const emailSection = form.settings.emailPosition === 'bottom' ? totalSections - 1 : 0;
   const showEmailAtTop = requiresEmail && emailSection === 0 && currentSectionIndex === 0 && form.settings.emailPosition !== 'bottom';
   const showEmailAtBottom = requiresEmail && form.settings.emailPosition === 'bottom' && currentSectionIndex === totalSections - 1;
   const emailBlock = (
-            <div className={`col-span-6 bg-white ${theme.card} ${theme.cardPad} ${errors.__email ? '!border-rose-400 ring-2 ring-rose-100' : ''}`}>
+            <div id="email-field" className={`col-span-6 bg-white ${theme.card} ${theme.cardPad} ${errors.__email ? '!border-rose-400 ring-2 ring-rose-100' : ''}`}>
               <label className="block text-sm font-semibold text-slate-900 mb-1">
                 {form.settings.emailLabel || 'Correo electrónico'} <span className="text-rose-500 font-bold">*</span>
               </label>
@@ -361,6 +418,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                 <p className="text-xs text-slate-500 mb-2">{form.settings.emailHelp || 'Solo se permite una respuesta por correo electrónico.'}</p>
               )}
               <input
+                id="contact-email-input"
                 type="email"
                 value={contactEmail}
                 onChange={(e) => { setContactEmail(e.target.value); if (errors.__email) setErrors(prev => { const c = { ...prev }; delete c.__email; return c; }); }}

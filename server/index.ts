@@ -875,7 +875,7 @@ app.post('/api/public/forms/:id/responses', publicSubmitLimit, async (req, res, 
     }
     if (settings.limitOneResponsePerUser && payload.respondentEmail) {
       const dup = await db.query('SELECT 1 FROM form_responses WHERE form_id = $1 AND lower(respondent_email) = lower($2) LIMIT 1', [req.params.id, payload.respondentEmail]);
-      if (dup.rowCount) return res.status(409).json({ message: 'Ya existe una respuesta registrada con este correo electrónico.' });
+      if (dup.rowCount) return res.status(409).json({ message: 'Ya existe una respuesta registrada con este correo electrónico.', code: 'duplicate_email' });
     }
     // Keep only answers to this form's real questions, with sane sizes (the endpoint is public)
     const questionIds = new Set<string>(((form.rows[0].definition?.fields ?? []) as { id?: string; type?: string }[])
