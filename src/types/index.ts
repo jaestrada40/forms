@@ -125,7 +125,7 @@ export type FormStatus = 'draft' | 'published' | 'closed';
 
 /** Captcha that applies to a form, decided by the server (provider + public site key; never the secret). */
 export interface FormCaptcha {
-  provider: 'builtin' | 'turnstile' | 'hcaptcha' | 'recaptcha';
+  provider: 'builtin' | 'turnstile' | 'hcaptcha' | 'recaptcha' | 'recaptcha3';
   siteKey?: string;
 }
 

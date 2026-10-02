@@ -181,15 +181,16 @@ export function verifyChallenge(token: unknown, answer: unknown): boolean {
 // External captcha providers (server-side token verification)
 // ---------------------------------------------------------------------------
 
-export type CaptchaProvider = 'turnstile' | 'hcaptcha' | 'recaptcha';
+export type CaptchaProvider = 'turnstile' | 'hcaptcha' | 'recaptcha' | 'recaptcha3';
 
 const VERIFY_URLS: Record<CaptchaProvider, string> = {
   turnstile: 'https://challenges.cloudflare.com/turnstile/v0/siteverify',
   hcaptcha: 'https://api.hcaptcha.com/siteverify',
   recaptcha: 'https://www.google.com/recaptcha/api/siteverify',
+  recaptcha3: 'https://www.google.com/recaptcha/api/siteverify', // same endpoint as v2; v3 adds score and action
 };
 
-export interface CaptchaVerdict { ok: boolean; errors: string[]; unreachable?: boolean }
+export interface CaptchaVerdict { ok: boolean; errors: string[]; unreachable?: boolean; score?: number; action?: string }
 
 /** Asks the provider whether a widget token is valid. Network failures are reported as `unreachable`. */
 export async function verifyExternalCaptcha(provider: CaptchaProvider, secret: string, siteKey: string, token: string, ip?: string): Promise<CaptchaVerdict> {
@@ -198,9 +199,21 @@ export async function verifyExternalCaptcha(provider: CaptchaProvider, secret: s
   if (provider === 'hcaptcha' && siteKey) body.set('sitekey', siteKey);
   try {
     const response = await fetch(VERIFY_URLS[provider], { method: 'POST', body, signal: AbortSignal.timeout(6_000) });
-    const data = await response.json() as { success?: boolean; 'error-codes'?: string[] };
-    return { ok: data.success === true, errors: data['error-codes'] ?? [] };
+    const data = await response.json() as { success?: boolean; 'error-codes'?: string[]; score?: number; action?: string };
+    return { ok: data.success === true, errors: data['error-codes'] ?? [], score: data.score, action: data.action };
   } catch {
     return { ok: false, errors: ['unreachable'], unreachable: true };
   }
+}
+
+/** reCAPTCHA v3 does not show a challenge: it scores each request from 0.0 (bot) to 1.0 (human). */
+export const RECAPTCHA_V3_ACTION = 'submit';
+
+export function evaluateRecaptchaV3(verdict: CaptchaVerdict, minScore: number): CaptchaVerdict {
+  if (!verdict.ok) return verdict;
+  // A v2 key answered by the v3 endpoint has no score; an unexpected action means the token came from somewhere else
+  if (typeof verdict.score !== 'number') return { ...verdict, ok: false, errors: ['missing-score'] };
+  if (verdict.action !== RECAPTCHA_V3_ACTION) return { ...verdict, ok: false, errors: ['action-mismatch'] };
+  if (verdict.score < minScore) return { ...verdict, ok: false, errors: ['score-too-low'] };
+  return verdict;
 }

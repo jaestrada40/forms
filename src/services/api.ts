@@ -83,13 +83,15 @@ export interface PublicFormRow {
   description: string;
   department: string;
   definition: { fields: unknown[]; design: Record<string, unknown>; settings: Record<string, unknown> };
-  captcha?: { provider: 'builtin' | 'turnstile' | 'hcaptcha' | 'recaptcha'; siteKey?: string } | null;
+  captcha?: { provider: 'builtin' | 'turnstile' | 'hcaptcha' | 'recaptcha' | 'recaptcha3'; siteKey?: string } | null;
 }
 
 export interface CaptchaSettings {
-  provider: 'none' | 'turnstile' | 'hcaptcha' | 'recaptcha';
+  provider: 'none' | 'turnstile' | 'hcaptcha' | 'recaptcha' | 'recaptcha3';
   siteKey: string;
   hasSecret: boolean;
+  /** reCAPTCHA v3: minimum score (0.1 - 0.9) to accept a submission */
+  minScore?: number;
 }
 
 export interface AuditLogRow {
@@ -206,9 +208,9 @@ export const api = {
   deleteReportSchedule: (id: string) => request<void>(`/api/report-schedules/${id}`, { method: 'DELETE' }),
   sendReportScheduleNow: (id: string) => request<{ ok: true }>(`/api/report-schedules/${id}/send`, { method: 'POST' }),
   getCaptchaSettings: () => request<CaptchaSettings>('/api/settings/captcha'),
-  saveCaptchaSettings: (payload: { provider: string; siteKey: string; secretKey?: string }) => request<{ ok: true }>('/api/settings/captcha', { method: 'PUT', body: JSON.stringify(payload) }),
-  verifyCaptchaSettings: () => request<{ ok: true }>('/api/settings/captcha/verify', { method: 'POST' }),
-  getCaptchaStatus: () => request<{ provider: 'none' | 'turnstile' | 'hcaptcha' | 'recaptcha'; siteKey: string }>('/api/settings/captcha-status'),
+  saveCaptchaSettings: (payload: { provider: string; siteKey: string; secretKey?: string; minScore?: number }) => request<{ ok: true }>('/api/settings/captcha', { method: 'PUT', body: JSON.stringify(payload) }),
+  verifyCaptchaSettings: () => request<{ ok: true; checked: boolean }>('/api/settings/captcha/verify', { method: 'POST' }),
+  getCaptchaStatus: () => request<{ provider: 'none' | 'turnstile' | 'hcaptcha' | 'recaptcha' | 'recaptcha3'; siteKey: string }>('/api/settings/captcha-status'),
   getPublicChallenge: (formId: string) => request<{ question: string; token: string }>(`/api/public/forms/${formId}/challenge`),
   getNotifications: () => request<NotificationRow[]>('/api/notifications'),
   updateInstitutionSettings: (payload: InstitutionSettings) => request<InstitutionSettings>('/api/settings/institution', { method: 'PATCH', body: JSON.stringify(payload) }),

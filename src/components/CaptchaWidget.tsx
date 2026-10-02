@@ -99,3 +99,40 @@ export const CaptchaWidget: React.FC<CaptchaWidgetProps> = ({ provider, siteKey,
   }
   return <div ref={container} className="min-h-[65px]" />;
 };
+
+// ---------------------------------------------------------------------------
+// reCAPTCHA v3: no widget. The script is loaded with the site key and a token is requested when the form is sent.
+// ---------------------------------------------------------------------------
+
+const v3Loading = new Map<string, Promise<any>>();
+
+function loadRecaptchaV3(siteKey: string): Promise<any> {
+  const cached = v3Loading.get(siteKey);
+  if (cached) return cached;
+  const promise = new Promise<any>((resolve, reject) => {
+    const ready = () => {
+      const api = (window as any).grecaptcha;
+      if (api?.ready) api.ready(() => resolve(api)); else reject(new Error('missing'));
+    };
+    if ((window as any).grecaptcha?.execute) return ready();
+    const script = document.createElement('script');
+    script.src = `https://www.google.com/recaptcha/api.js?render=${encodeURIComponent(siteKey)}`;
+    script.async = true;
+    script.defer = true;
+    script.onload = ready;
+    script.onerror = () => { script.remove(); reject(new Error('blocked')); };
+    document.head.appendChild(script);
+  });
+  promise.catch(() => v3Loading.delete(siteKey));
+  v3Loading.set(siteKey, promise);
+  return promise;
+}
+
+/** Loads reCAPTCHA v3 early (so its badge shows and the first submit is fast). Safe to call repeatedly. */
+export const preloadRecaptchaV3 = (siteKey: string) => { loadRecaptchaV3(siteKey).catch(() => undefined); };
+
+/** Asks Google for a token for this action. Rejects when the script is blocked or the key is invalid. */
+export async function getRecaptchaV3Token(siteKey: string, action = 'submit'): Promise<string> {
+  const api = await loadRecaptchaV3(siteKey);
+  return api.execute(siteKey, { action });
+}

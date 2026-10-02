@@ -36,7 +36,7 @@ export default defineConfig(({ mode }) => {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://*.hcaptcha.com https://hcaptcha.com",
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: blob: https://www.gstatic.com",
-              `connect-src 'self' ${apiOrigin} https://*.hcaptcha.com https://hcaptcha.com https://challenges.cloudflare.com`.trim(),
+              `connect-src 'self' ${apiOrigin} https://*.hcaptcha.com https://hcaptcha.com https://challenges.cloudflare.com https://www.google.com`.trim(),
               "object-src 'none'",
               "base-uri 'self'",
               "form-action 'self'",

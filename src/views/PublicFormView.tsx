@@ -3,7 +3,7 @@ import { fieldSpan, getFormTheme, getSubmitButton, titleCss, useFormFonts } from
 import { FormBannerBar, FormMediaBlock, HeaderBanners, HeaderLogos } from '../components/FormBranding';
 import React, { useEffect, useState, useMemo } from 'react';
 import { api } from '../services/api';
-import { CaptchaWidget } from '../components/CaptchaWidget';
+import { CaptchaWidget, getRecaptchaV3Token, preloadRecaptchaV3 } from '../components/CaptchaWidget';
 import { 
   ShieldCheck, 
   ArrowLeft, 
@@ -58,7 +58,10 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
   const [challengeAnswer, setChallengeAnswer] = useState('');
   const captchaInfo = captchaOverride !== undefined ? captchaOverride : form.captcha;
   const captchaEnabled = captchaInfo?.provider === 'builtin';
-  const externalCaptcha = captchaInfo && captchaInfo.provider !== 'builtin' ? captchaInfo : null;
+  // reCAPTCHA v3 has no widget: the token is requested when the form is sent
+  const invisibleCaptcha = captchaInfo?.provider === 'recaptcha3' ? captchaInfo : null;
+  const externalCaptcha = captchaInfo && captchaInfo.provider !== 'builtin' && captchaInfo.provider !== 'recaptcha3' ? captchaInfo : null;
+  useEffect(() => { if (invisibleCaptcha?.siteKey) preloadRecaptchaV3(invisibleCaptcha.siteKey); }, [invisibleCaptcha?.siteKey]);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaReset, setCaptchaReset] = useState(0);
 
@@ -247,10 +250,19 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
     setSubmitting(true);
     setSubmitError(null);
     try {
+      let v3Token: string | undefined;
+      if (invisibleCaptcha) {
+        try {
+          v3Token = await getRecaptchaV3Token(invisibleCaptcha.siteKey ?? '');
+        } catch {
+          throw new Error('No se pudo completar la verificación anti-spam (revise su conexión o si un bloqueador la impide).');
+        }
+      }
       const saved = await onSubmitResponse(newResponse, {
         website: honeypot || undefined,
         ...(captchaEnabled && challenge ? { captchaToken: challenge.token, captchaAnswer: challengeAnswer } : {}),
         ...(externalCaptcha && captchaToken ? { captchaToken } : {}),
+        ...(v3Token ? { captchaToken: v3Token } : {}),
       });
       setSubmittedFolio(saved.folio);
       setSubmittedAt(saved.submittedAt);
@@ -869,6 +881,14 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
               </button>
             )}
           </div>
+          {invisibleCaptcha && (
+            <p className="text-[11px] text-slate-400 text-right">
+              Protegido por reCAPTCHA de Google ·{' '}
+              <a href="https://policies.google.com/privacy" target="_blank" rel="noreferrer" className="underline">Privacidad</a> y{' '}
+              <a href="https://policies.google.com/terms" target="_blank" rel="noreferrer" className="underline">Términos</a>
+            </p>
+          )}
+
           {submitError && (
             <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg">{submitError}</div>
           )}

@@ -1654,8 +1654,10 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   key: 'captchaEnabled' as const,
                   title: 'Verificación anti-spam (captcha)',
                   desc: captchaStatus && captchaStatus.provider !== 'none'
-                    ? `Se muestra ${CAPTCHA_LABELS[captchaStatus.provider]} antes de enviar. Apáguelo solo si este formulario no es público`
-                    : 'Pide resolver una pregunta sencilla antes de enviar. Un Administrador puede configurar Turnstile, hCaptcha o reCAPTCHA en Configuración',
+                    ? (captchaStatus.provider === 'recaptcha3'
+                      ? 'Protege el envío con reCAPTCHA v3 (invisible, no muestra casilla). Apáguelo solo si este formulario no es público'
+                      : `Se muestra ${CAPTCHA_LABELS[captchaStatus.provider]} antes de enviar. Apáguelo solo si este formulario no es público`)
+                    : 'Pide resolver una pregunta sencilla antes de enviar. Un Administrador puede configurar Turnstile, hCaptcha o reCAPTCHA (v2 o v3) en Configuración',
                   checked: activeCaptcha !== null,
                   disabled: false,
                 },
