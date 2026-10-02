@@ -164,12 +164,16 @@ export interface FormResponse {
 export interface Template {
   id: string;
   title: string;
-  category: 'Encuestas' | 'Solicitudes' | 'Recursos Humanos' | 'Eventos' | 'Evaluaciones' | 'Registro';
+  category: string;
   description: string;
   fieldsCount: number;
   iconName: string;
   department: string;
   form: Partial<Form>;
+  /** Saved by a user (shared with everyone); the built-in catalogue templates are not custom. */
+  custom?: boolean;
+  createdById?: string;
+  creatorName?: string;
 }
 
 export type UserRole = 'Administrador' | 'Creador' | 'Analista' | 'Respondedor';

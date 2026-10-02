@@ -300,6 +300,88 @@ app.patch('/api/settings/institution', requireAuth, requireRoles('Administrador'
   } catch (error) { next(error); }
 });
 
+// ---- Shared form templates: structure and design only (never responses, notification e-mails or limits) ----
+const templateFields = {
+  title: z.string().trim().min(3).max(120),
+  description: z.string().trim().max(500).default(''),
+  category: z.string().trim().min(2).max(60),
+};
+
+/** Keeps only what makes sense to reuse: the questions and the look, plus harmless settings. */
+function templateDefinition(definition: { fields?: unknown[]; design?: Record<string, unknown>; settings?: Record<string, unknown> }) {
+  const s = definition.settings ?? {};
+  return {
+    fields: definition.fields ?? [],
+    design: definition.design ?? {},
+    settings: {
+      collectEmails: !!s.collectEmails,
+      confirmationMessage: typeof s.confirmationMessage === 'string' ? s.confirmationMessage : '',
+      emailLabel: s.emailLabel, emailHelp: s.emailHelp, emailPlaceholder: s.emailPlaceholder, emailPosition: s.emailPosition,
+    },
+  };
+}
+
+const TEMPLATE_SELECT = `SELECT t.id, t.title, t.description, t.category, t.department, t.definition, t.created_by, t.created_at,
+  u.name AS creator_name FROM form_templates t JOIN users u ON u.id = t.created_by`;
+
+app.get('/api/templates', requireAuth, requireRoles('Administrador', 'Creador', 'Analista'), async (_req, res, next) => {
+  try { res.json((await db.query(`${TEMPLATE_SELECT} ORDER BY t.created_at DESC`)).rows); } catch (error) { next(error); }
+});
+
+// Limits against abuse: a few creations per minute, a cap per person and a cap on the size of one template
+const MAX_TEMPLATES_PER_USER = 50;
+const MAX_TEMPLATE_BYTES = 2_000_000;
+const templateCreateLimit = rateLimit({ windowMs: 60_000, max: 10, key: req => `tpl:${req.user?.id ?? req.ip}` });
+
+app.post('/api/templates', requireAuth, requireRoles('Administrador', 'Creador'), templateCreateLimit, async (req, res, next) => {
+  try {
+    const data = z.object({ formId: z.string().uuid(), ...templateFields }).parse(req.body);
+    // A Creador can only turn their own forms into templates
+    const form = await db.query('SELECT department, definition FROM forms WHERE id = $1 AND (created_by = $2 OR $3 = \'Administrador\')', [data.formId, req.user!.id, req.user!.role]);
+    if (!form.rowCount) return res.status(404).json({ message: 'Formulario no encontrado.' });
+    const definition = templateDefinition(form.rows[0].definition ?? {});
+    if ((definition.fields as unknown[]).length === 0) return res.status(400).json({ message: 'El formulario no tiene campos para guardar como plantilla.' });
+    if (JSON.stringify(definition).length > MAX_TEMPLATE_BYTES) return res.status(413).json({ message: 'El formulario es demasiado grande para guardarlo como plantilla (máximo 2 MB).' });
+    const owned = await db.query('SELECT COUNT(*)::int AS n FROM form_templates WHERE created_by = $1', [req.user!.id]);
+    if (owned.rows[0].n >= MAX_TEMPLATES_PER_USER) {
+      return res.status(400).json({ message: `Ya tiene ${MAX_TEMPLATES_PER_USER} plantillas. Elimine alguna para guardar otra.` });
+    }
+    const result = await db.query(
+      `INSERT INTO form_templates (title, description, category, department, definition, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [data.title, data.description, data.category, form.rows[0].department, definition, req.user!.id],
+    );
+    await audit(req.user!.id, 'CREATE', 'template', result.rows[0].id, { title: data.title });
+    res.status(201).json((await db.query(`${TEMPLATE_SELECT} WHERE t.id = $1`, [result.rows[0].id])).rows[0]);
+  } catch (error) { next(error); }
+});
+
+app.patch('/api/templates/:id', requireAuth, requireRoles('Administrador', 'Creador'), async (req, res, next) => {
+  try {
+    const data = z.object(templateFields).parse(req.body);
+    const result = await db.query(
+      `UPDATE form_templates SET title = $1, description = $2, category = $3, updated_at = NOW()
+       WHERE id = $4 AND (created_by = $5 OR $6 = 'Administrador') RETURNING id`,
+      [data.title, data.description, data.category, req.params.id, req.user!.id, req.user!.role],
+    );
+    if (!result.rowCount) return res.status(404).json({ message: 'Plantilla no encontrada.' });
+    await audit(req.user!.id, 'UPDATE', 'template', req.params.id, { title: data.title });
+    res.json((await db.query(`${TEMPLATE_SELECT} WHERE t.id = $1`, [req.params.id])).rows[0]);
+  } catch (error) { next(error); }
+});
+
+app.delete('/api/templates/:id', requireAuth, requireRoles('Administrador', 'Creador'), async (req, res, next) => {
+  try {
+    const result = await db.query(
+      "DELETE FROM form_templates WHERE id = $1 AND (created_by = $2 OR $3 = 'Administrador') RETURNING title",
+      [req.params.id, req.user!.id, req.user!.role],
+    );
+    if (!result.rowCount) return res.status(404).json({ message: 'Plantilla no encontrada.' });
+    await audit(req.user!.id, 'DELETE', 'template', req.params.id, { title: result.rows[0].title });
+    res.status(204).end();
+  } catch (error) { next(error); }
+});
+
 app.get('/api/forms', requireAuth, async (req, res, next) => {
   try {
     const { id, role } = req.user!;

@@ -710,6 +710,87 @@ export const ScheduleReportModal: React.FC<{
   );
 };
 
+// 7b. Save form as template / edit template
+export const TemplateModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  /** 'create' saves the given form as a shared template; 'edit' renames an existing one. */
+  mode: 'create' | 'edit';
+  initial: { title: string; description: string; category: string } | null;
+  categories: string[];
+  onSubmit: (data: { title: string; description: string; category: string }) => Promise<void> | void;
+}> = ({ isOpen, onClose, mode, initial, categories, onSubmit }) => {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [category, setCategory] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || !initial) return;
+    setTitle(initial.title);
+    setDescription(initial.description);
+    setCategory(initial.category);
+  }, [isOpen, initial]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (title.trim().length < 3 || category.trim().length < 2) return;
+    setSaving(true);
+    try {
+      await onSubmit({ title: title.trim(), description: description.trim(), category: category.trim() });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <ModalWrapper isOpen={isOpen} onClose={onClose} title={mode === 'create' ? 'Guardar como plantilla' : 'Editar plantilla'}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {mode === 'create' && (
+          <p className="text-sm text-slate-600">
+            Se guardan las preguntas y el diseño del formulario, <strong>no las respuestas</strong>. La plantilla queda compartida con todos los usuarios con acceso a la galería.
+          </p>
+        )}
+        <div>
+          <label htmlFor="tpl-title" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Nombre de la plantilla</label>
+          <input
+            id="tpl-title" type="text" required minLength={3} maxLength={120} value={title} onChange={(e) => setTitle(e.target.value)}
+            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+          />
+        </div>
+        <div>
+          <label htmlFor="tpl-desc" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Descripción</label>
+          <textarea
+            id="tpl-desc" rows={3} maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="¿Para qué sirve? ¿Cuándo conviene usarla?"
+            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600 resize-none"
+          />
+        </div>
+        <div>
+          <label htmlFor="tpl-cat" className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Categoría</label>
+          <input
+            id="tpl-cat" type="text" required minLength={2} maxLength={60} list="template-categories" value={category} onChange={(e) => setCategory(e.target.value)}
+            placeholder="Elija una o escriba una nueva"
+            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+          />
+          <datalist id="template-categories">
+            {categories.map(c => <option key={c} value={c} />)}
+          </datalist>
+        </div>
+        <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors">
+            Cancelar
+          </button>
+          <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg transition-colors">
+            {mode === 'create' ? 'Guardar plantilla' : 'Guardar cambios'}
+          </button>
+        </div>
+      </form>
+    </ModalWrapper>
+  );
+};
+
 // 7. New Form Choice Modal
 export const NewFormModal: React.FC<{
   isOpen: boolean;

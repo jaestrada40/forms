@@ -11,7 +11,9 @@ import {
   ArrowRight, 
   Sparkles, 
   Search,
-  Check
+  Check,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 import { Template, Form } from '../types';
 import { Pagination, usePagination } from '../components/Pagination';
@@ -20,28 +22,38 @@ import { TEMPLATES_CATALOG } from '../data/mockData';
 
 interface TemplatesViewProps {
   onUseTemplate: (template: Template) => void;
+  /** Templates saved by users (shared with everyone) */
+  customTemplates: Template[];
+  currentUser: { id: string; role: string } | null;
+  onEditTemplate: (template: Template) => void;
+  onDeleteTemplate: (template: Template) => void;
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
-const CATEGORIES = [
-  'Todas',
-  'Encuestas',
-  'Solicitudes',
-  'Recursos Humanos',
-  'Eventos',
-  'Evaluaciones',
-  'Registro',
-] as const;
+const BASE_CATEGORIES = ['Encuestas', 'Solicitudes', 'Recursos Humanos', 'Eventos', 'Evaluaciones', 'Registro'];
 
 export const TemplatesView: React.FC<TemplatesViewProps> = ({
   onUseTemplate,
+  customTemplates,
+  currentUser,
+  onEditTemplate,
+  onDeleteTemplate,
   showToast
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('Todas');
   const [searchQuery, setSearchQuery] = useState('');
 
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const allTemplates = useMemo(() => [...customTemplates, ...TEMPLATES_CATALOG], [customTemplates]);
+  // Built-in categories first, then any category created along with a custom template
+  const categories = useMemo(
+    () => ['Todas', ...BASE_CATEGORIES, ...[...new Set(customTemplates.map(t => t.category))].filter(c => !BASE_CATEGORIES.includes(c)).sort()],
+    [customTemplates],
+  );
+  const canManage = (t: Template) => !!t.custom && !!currentUser && (currentUser.role === 'Administrador' || t.createdById === currentUser.id);
+
   const filteredTemplates = useMemo(() => {
-    return TEMPLATES_CATALOG.filter(t => {
+    return allTemplates.filter(t => {
       const matchesCat = selectedCategory === 'Todas' || t.category === selectedCategory;
       const matchesSearch = !searchQuery || 
         t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -49,7 +61,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
         t.department.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesCat && matchesSearch;
     });
-  }, [selectedCategory, searchQuery]);
+  }, [allTemplates, selectedCategory, searchQuery]);
   const pg = usePagination(filteredTemplates, `${selectedCategory}|${searchQuery}`, 10);
 
   const getTemplateIcon = (name: string) => {
@@ -76,7 +88,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
             Galería de Plantillas Estandarizadas
           </h2>
           <p className="text-xs text-slate-500">
-            Modelos preconfigurados con preguntas normativas y flujo validado para el sector público.
+            Modelos preconfigurados y plantillas compartidas por su equipo. Guarde cualquier formulario como plantilla desde el constructor o desde su lista.
           </p>
         </div>
 
@@ -94,7 +106,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
 
       {/* Category Pills Bar */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-slate-200">
-        {CATEGORIES.map(cat => (
+        {categories.map(cat => (
           <button
             key={cat}
             onClick={() => setSelectedCategory(cat)}
@@ -124,9 +136,16 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                   <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors shadow-2xs">
                     <Icon className="w-5 h-5" />
                   </div>
-                  <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                    {tpl.category}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {tpl.custom && (
+                      <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded-md" title={`Creada por ${tpl.creatorName}`}>
+                        Compartida
+                      </span>
+                    )}
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                      {tpl.category}
+                    </span>
+                  </div>
                 </div>
 
                 <h3 className="font-bold text-sm text-slate-900 group-hover:text-blue-700 transition-colors mb-1.5">
@@ -139,8 +158,10 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
 
               <div>
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 mb-4">
-                  <span>{tpl.department}</span>
-                  <span className="font-mono tabular-nums">{(tpl.form.fields || []).filter(isQuestionField).length} preguntas</span>
+                  <span className="truncate pr-2">{tpl.custom ? `Por ${tpl.creatorName}` : tpl.department}</span>
+                  <span className="font-mono tabular-nums">
+                    {(() => { const n = (tpl.form.fields || []).filter(isQuestionField).length; return `${n} ${n === 1 ? 'pregunta' : 'preguntas'}`; })()}
+                  </span>
                 </div>
 
                 <button
@@ -153,6 +174,27 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
                   <span>Usar esta plantilla</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
+
+                {canManage(tpl) && (
+                  confirmDeleteId === tpl.id ? (
+                    <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+                      <span className="text-rose-700 font-medium">¿Eliminar para todos?</span>
+                      <span className="flex gap-1.5">
+                        <button onClick={() => setConfirmDeleteId(null)} className="px-2 py-1 text-slate-600 hover:bg-slate-100 rounded">Cancelar</button>
+                        <button onClick={() => { setConfirmDeleteId(null); onDeleteTemplate(tpl); }} className="px-2 py-1 text-white bg-rose-600 hover:bg-rose-700 rounded font-semibold">Eliminar</button>
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="mt-2 flex items-center justify-end gap-1 text-xs">
+                      <button onClick={() => onEditTemplate(tpl)} className="px-2 py-1 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded flex items-center gap-1">
+                        <Pencil className="w-3 h-3" /> Editar
+                      </button>
+                      <button onClick={() => setConfirmDeleteId(tpl.id)} className="px-2 py-1 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded flex items-center gap-1">
+                        <Trash2 className="w-3 h-3" /> Eliminar
+                      </button>
+                    </div>
+                  )
+                )}
               </div>
             </div>
           );

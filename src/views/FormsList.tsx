@@ -9,6 +9,7 @@ import {
   MoreVertical, 
   ExternalLink, 
   Copy, 
+  LayoutTemplate,
   Trash2, 
   Edit3, 
   Inbox, 
@@ -37,6 +38,7 @@ interface FormsListProps {
   onOpenPublishModal: (form: Form) => void;
   onOpenDeleteModal: (form: Form) => void;
   onOpenDuplicateModal: (form: Form) => void;
+  onSaveAsTemplate: (form: Form) => void;
   searchQuery: string;
 }
 
@@ -50,6 +52,7 @@ export const FormsList: React.FC<FormsListProps> = ({
   onOpenPublishModal,
   onOpenDeleteModal,
   onOpenDuplicateModal,
+  onSaveAsTemplate,
   searchQuery
 }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('table');
@@ -477,6 +480,16 @@ export const FormsList: React.FC<FormsListProps> = ({
                                 >
                                   <Copy className="w-3.5 h-3.5 text-slate-500" />
                                   Duplicar
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    closeDropdown();
+                                    onSaveAsTemplate(form);
+                                  }}
+                                  className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                >
+                                  <LayoutTemplate className="w-3.5 h-3.5 text-slate-500" />
+                                  Guardar como plantilla
                                 </button>
                                 <div className="border-t border-slate-100 my-1"></div>
                                 <button

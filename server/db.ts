@@ -48,6 +48,18 @@ export async function initializeDatabase() {
       published_at TIMESTAMPTZ
     );
 
+    CREATE TABLE IF NOT EXISTS form_templates (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT 'General',
+      department TEXT NOT NULL DEFAULT '',
+      definition JSONB NOT NULL,
+      created_by UUID NOT NULL REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS form_responses (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       form_id UUID NOT NULL REFERENCES forms(id) ON DELETE CASCADE,

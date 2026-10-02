@@ -86,6 +86,18 @@ export interface PublicFormRow {
   captcha?: { provider: 'builtin' | 'turnstile' | 'hcaptcha' | 'recaptcha' | 'recaptcha3'; siteKey?: string } | null;
 }
 
+export interface TemplateRow {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  department: string;
+  definition: { fields: unknown[]; design: Record<string, unknown>; settings: Record<string, unknown> };
+  created_by: string;
+  creator_name: string;
+  created_at: string;
+}
+
 export interface CaptchaSettings {
   provider: 'none' | 'turnstile' | 'hcaptcha' | 'recaptcha' | 'recaptcha3';
   siteKey: string;
@@ -207,6 +219,10 @@ export const api = {
   createReportSchedule: (payload: { frequency: string; recipients: string[]; includeCsv: boolean }) => request<ReportScheduleRow>('/api/report-schedules', { method: 'POST', body: JSON.stringify(payload) }),
   deleteReportSchedule: (id: string) => request<void>(`/api/report-schedules/${id}`, { method: 'DELETE' }),
   sendReportScheduleNow: (id: string) => request<{ ok: true }>(`/api/report-schedules/${id}/send`, { method: 'POST' }),
+  templates: () => request<TemplateRow[]>('/api/templates'),
+  createTemplate: (payload: { formId: string; title: string; description: string; category: string }) => request<TemplateRow>('/api/templates', { method: 'POST', body: JSON.stringify(payload) }),
+  updateTemplate: (id: string, payload: { title: string; description: string; category: string }) => request<TemplateRow>(`/api/templates/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteTemplate: (id: string) => request<void>(`/api/templates/${id}`, { method: 'DELETE' }),
   getCaptchaSettings: () => request<CaptchaSettings>('/api/settings/captcha'),
   saveCaptchaSettings: (payload: { provider: string; siteKey: string; secretKey?: string; minScore?: number }) => request<{ ok: true }>('/api/settings/captcha', { method: 'PUT', body: JSON.stringify(payload) }),
   verifyCaptchaSettings: () => request<{ ok: true; checked: boolean }>('/api/settings/captcha/verify', { method: 'POST' }),

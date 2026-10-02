@@ -34,6 +34,7 @@ const ENTITY_LABELS: Record<string, string> = {
   user: 'Usuario',
   form: 'Formulario',
   form_response: 'Respuesta',
+  template: 'Plantilla',
   settings: 'Configuración',
 };
 
