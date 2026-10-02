@@ -8,7 +8,8 @@ import {
   UserRole
 } from './types';
 import { api, session, SessionUser, BrandingInfo } from './services/api';
-import { formRowToForm, formToPayload, responseRowToResponse, userRowToUser } from './services/mappers';
+import { formRowToForm, formToPayload, responseRowToResponse, templateRowToTemplate, userRowToUser } from './services/mappers';
+import { TEMPLATES_CATALOG } from './data/mockData';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ToastContainer, ToastMessage } from './components/Toast';
@@ -19,6 +20,7 @@ import {
   DuplicateModal,
   InviteUserModal,
   ScheduleReportModal,
+  TemplateModal,
   NewFormModal
 } from './components/Modals';
 import { LoginView } from './views/LoginView';
@@ -54,6 +56,9 @@ function AuthenticatedApp() {
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
+  const [customTemplates, setCustomTemplates] = useState<Template[]>([]);
+  // Template modal: save a form as a template, or edit an existing one
+  const [templateModal, setTemplateModal] = useState<{ mode: 'create'; form: Form } | { mode: 'edit'; template: Template } | null>(null);
   const [captchaStatus, setCaptchaStatus] = useState<CaptchaStatus | null>(null);
   const [loadingForms, setLoadingForms] = useState(false);
   const [branding, setBranding] = useState<BrandingInfo | null>(null);
@@ -154,6 +159,7 @@ function AuthenticatedApp() {
       loadForms();
       loadUsers();
       api.getDepartments().then(setDepartments).catch(() => {});
+      api.templates().then(rows => setCustomTemplates(rows.map(templateRowToTemplate))).catch(() => {});
       api.getCaptchaStatus().then(setCaptchaStatus).catch(() => {});
     }
   }, [authUser, loadForms, loadUsers]);
@@ -252,6 +258,34 @@ function AuthenticatedApp() {
   };
 
   // Actions: Use Template
+  const handleSaveTemplate = async (data: { title: string; description: string; category: string }) => {
+    if (!templateModal) return;
+    try {
+      if (templateModal.mode === 'create') {
+        const row = await api.createTemplate({ formId: templateModal.form.id, ...data });
+        setCustomTemplates(prev => [templateRowToTemplate(row), ...prev]);
+        showToast('Plantilla guardada y compartida con todos', 'success');
+      } else {
+        const row = await api.updateTemplate(templateModal.template.id, data);
+        setCustomTemplates(prev => prev.map(t => (t.id === row.id ? templateRowToTemplate(row) : t)));
+        showToast('Plantilla actualizada', 'success');
+      }
+    } catch (error) {
+      reportError(error, 'No fue posible guardar la plantilla.');
+      throw error; // keeps the modal open
+    }
+  };
+
+  const handleDeleteTemplate = async (template: Template) => {
+    try {
+      await api.deleteTemplate(template.id);
+      setCustomTemplates(prev => prev.filter(t => t.id !== template.id));
+      showToast('Plantilla eliminada', 'info');
+    } catch (error) {
+      reportError(error, 'No fue posible eliminar la plantilla.');
+    }
+  };
+
   const handleUseTemplate = async (template: Template) => {
     const department = template.department || authUser?.department || 'Dirección General';
     const payload = {
@@ -259,11 +293,13 @@ function AuthenticatedApp() {
       description: template.description,
       department,
       status: 'draft' as const,
+      // Templates saved by users keep their design; the built-in ones use the default look
       design: {
         primaryColor: '#1D4ED8',
         accentColor: '#10B981',
         fontFamily: 'sans' as const,
         themeStyle: 'institutional' as const,
+        ...(template.custom ? template.form.design : {}),
       },
       settings: {
         limitOneResponsePerUser: false,
@@ -273,6 +309,7 @@ function AuthenticatedApp() {
         notifyEmailOnSubmit: false,
         notificationEmails: [],
         department,
+        ...(template.custom ? template.form.settings : {}),
       },
       fields: template.form.fields || [],
     };
@@ -519,6 +556,7 @@ function AuthenticatedApp() {
                   onOpenPublishModal={(form) => setPublishModalForm(form)}
                   onOpenDeleteModal={(form) => setDeleteModalForm(form)}
                   onOpenDuplicateModal={(form) => setDuplicateModalForm(form)}
+                  onSaveAsTemplate={(form) => setTemplateModal({ mode: 'create', form })}
                   searchQuery={searchQuery}
                 />
               )}
@@ -533,6 +571,7 @@ function AuthenticatedApp() {
                   onShowPublicView={openPublicPreview}
                   onOpenShareModal={(form) => setShareModalForm(form)}
                   onOpenPublishModal={(form) => setPublishModalForm(form)}
+                  onSaveAsTemplate={(f) => setTemplateModal({ mode: 'create', form: f })}
                   showToast={showToast}
                 />
               )}
@@ -562,6 +601,10 @@ function AuthenticatedApp() {
               {currentScreen === 'templates' && (
                 <TemplatesView
                   onUseTemplate={handleUseTemplate}
+                  customTemplates={customTemplates}
+                  currentUser={authUser}
+                  onEditTemplate={(template) => setTemplateModal({ mode: 'edit', template })}
+                  onDeleteTemplate={handleDeleteTemplate}
                   showToast={showToast}
                 />
               )}
@@ -623,6 +666,19 @@ function AuthenticatedApp() {
         onClose={() => setDeleteModalForm(null)}
         form={deleteModalForm}
         onConfirmDelete={handleDeleteForm}
+      />
+
+      <TemplateModal
+        isOpen={!!templateModal}
+        onClose={() => setTemplateModal(null)}
+        mode={templateModal?.mode ?? 'create'}
+        initial={templateModal
+          ? templateModal.mode === 'create'
+            ? { title: templateModal.form.title, description: templateModal.form.description, category: '' }
+            : { title: templateModal.template.title, description: templateModal.template.description, category: templateModal.template.category }
+          : null}
+        categories={[...new Set([...TEMPLATES_CATALOG.map(t => t.category), ...customTemplates.map(t => t.category)])]}
+        onSubmit={handleSaveTemplate}
       />
 
       <DuplicateModal

@@ -1,5 +1,5 @@
-import { Form, FormDesign, FormField, FormSettings, UserAccount } from '../types';
-import { FormRow, PublicFormRow, ResponseRow, UserRow } from './api';
+import { Form, FormDesign, FormField, FormSettings, Template, UserAccount } from '../types';
+import { FormRow, PublicFormRow, ResponseRow, TemplateRow, UserRow } from './api';
 
 const defaultDesign: FormDesign = {
   primaryColor: '#1D4ED8',
@@ -89,5 +89,28 @@ export function userRowToUser(row: UserRow): UserAccount {
     lastActive: row.status === 'Invitado' ? 'Invitación enviada' : new Date(row.created_at).toLocaleDateString('es-GT'),
     initials,
     mfaEnabled: row.mfa_enabled,
+  };
+}
+
+export function templateRowToTemplate(row: TemplateRow): Template {
+  const fields = (row.definition?.fields as FormField[]) ?? [];
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    category: row.category,
+    department: row.department,
+    iconName: 'LayoutTemplate',
+    fieldsCount: fields.length,
+    form: {
+      title: row.title,
+      description: row.description,
+      fields,
+      design: row.definition?.design as Partial<FormDesign> as FormDesign,
+      settings: row.definition?.settings as Partial<FormSettings> as FormSettings,
+    },
+    custom: true,
+    createdById: row.created_by,
+    creatorName: row.creator_name,
   };
 }

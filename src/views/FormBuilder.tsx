@@ -41,7 +41,8 @@ import {
   MapPin,
   Sparkles,
   Image as ImageIcon,
-  PanelTop
+  PanelTop,
+  LayoutTemplate
 } from 'lucide-react';
 import { api } from '../services/api';
 import { Form, FormField, FormFieldType, FormDesign, FormSettings } from '../types';
@@ -64,6 +65,7 @@ interface FormBuilderProps {
   onShowPublicView: (formId: string) => void;
   onOpenShareModal: (form: Form) => void;
   onOpenPublishModal: (form: Form) => void;
+  onSaveAsTemplate: (form: Form) => void;
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -123,6 +125,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
   onShowPublicView,
   onOpenShareModal,
   onOpenPublishModal,
+  onSaveAsTemplate,
   showToast
 }) => {
   const theme = getFormTheme(form.design);
@@ -427,6 +430,15 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
           >
             <Share2 className="w-3.5 h-3.5" />
             <span className="hidden xl:inline">Compartir</span>
+          </button>
+
+          <button
+            onClick={() => onSaveAsTemplate(form)}
+            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-medium transition-colors"
+            title="Guardar como plantilla compartida"
+          >
+            <LayoutTemplate className="w-3.5 h-3.5" />
+            <span className="hidden 2xl:inline">Plantilla</span>
           </button>
 
           <button
