@@ -14,11 +14,13 @@ import {
   Trash2,
   Upload
 } from 'lucide-react';
-import { api, InstitutionSettings } from '../services/api';
+import { api, InstitutionSettings, SmtpSettings } from '../services/api';
 
 interface SettingsViewProps {
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
   isSuperAdmin: boolean;
+  departments: string[];
+  onDepartmentsChange: (departments: string[]) => void;
   onBrandingUpdated?: (branding: { name: string; logoDataUrl: string | null; loginLogoDataUrl: string | null }) => void;
 }
 
@@ -33,13 +35,81 @@ const defaultSettings: InstitutionSettings = {
   loginLogoDataUrl: null,
 };
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ showToast, isSuperAdmin, onBrandingUpdated }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ showToast, isSuperAdmin, departments, onDepartmentsChange, onBrandingUpdated }) => {
   const [settings, setSettings] = useState<InstitutionSettings>(defaultSettings);
   const [useSameLogo, setUseSameLogo] = useState(true);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loginFileInputRef = useRef<HTMLInputElement>(null);
+
+  const [smtp, setSmtp] = useState<SmtpSettings | null>(null);
+  const [smtpPassword, setSmtpPassword] = useState('');
+  const [smtpSaving, setSmtpSaving] = useState(false);
+  const [testTo, setTestTo] = useState('');
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    api.getSmtpSettings().then(setSmtp).catch(() => showToast('No fue posible cargar la configuración de correo.', 'error'));
+  }, [isSuperAdmin]);
+
+  const handleSaveSmtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!smtp) return;
+    setSmtpSaving(true);
+    try {
+      await api.saveSmtpSettings({
+        host: smtp.host, port: smtp.port, secure: smtp.secure, user: smtp.user, from: smtp.from,
+        password: smtpPassword || undefined,
+      });
+      setSmtpPassword('');
+      setSmtp(await api.getSmtpSettings());
+      showToast('Configuración de correo guardada', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'No fue posible guardar la configuración de correo.', 'error');
+    } finally {
+      setSmtpSaving(false);
+    }
+  };
+
+  const handleSmtpTest = async () => {
+    setTesting(true);
+    try {
+      await api.sendSmtpTest(testTo.trim());
+      showToast(`Correo de prueba enviado a ${testTo.trim()}`, 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'No fue posible enviar el correo de prueba.', 'error');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const [newDepartment, setNewDepartment] = useState('');
+  const [deptSaving, setDeptSaving] = useState(false);
+
+  const saveDepartments = async (next: string[]) => {
+    setDeptSaving(true);
+    try {
+      onDepartmentsChange(await api.saveDepartments(next));
+      setNewDepartment('');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'No fue posible guardar los departamentos.', 'error');
+    } finally {
+      setDeptSaving(false);
+    }
+  };
+
+  const handleAddDepartment = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newDepartment.trim();
+    if (name.length < 2) return;
+    if (departments.some(d => d.toLowerCase() === name.toLowerCase())) {
+      showToast('Ese departamento ya existe.', 'info');
+      return;
+    }
+    saveDepartments([...departments, name]);
+  };
 
   const [mfaEnforced, setMfaEnforced] = useState(false);
   const [mfaLoading, setMfaLoading] = useState(false);
@@ -134,6 +204,124 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ showToast, isSuperAd
         <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-4 py-3">
           Solo un Administrador puede ver y modificar la configuración institucional.
         </div>
+      )}
+
+      {isSuperAdmin && (
+        <div className="bg-white rounded-xl border border-slate-200/80 p-5 shadow-xs space-y-4">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+            <Building2 className="w-4 h-4 text-blue-700" />
+            <h3 className="font-bold text-sm text-slate-900">Departamentos</h3>
+          </div>
+          <p className="text-[11px] text-slate-500">
+            Estos departamentos aparecen al crear usuarios y al asignar la unidad responsable de un formulario.
+          </p>
+          <form onSubmit={handleAddDepartment} className="flex gap-2">
+            <input
+              type="text"
+              value={newDepartment}
+              onChange={(e) => setNewDepartment(e.target.value)}
+              placeholder="Ej: Dirección de Informática"
+              className="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+            />
+            <button
+              type="submit"
+              disabled={deptSaving || newDepartment.trim().length < 2}
+              className="px-4 py-2 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white rounded-lg text-xs font-semibold"
+            >
+              Agregar
+            </button>
+          </form>
+          <ul className="divide-y divide-slate-100 border border-slate-200 rounded-lg">
+            {departments.length === 0 && <li className="px-3 py-2 text-xs text-slate-400">Aún no hay departamentos.</li>}
+            {departments.map(d => (
+              <li key={d} className="px-3 py-2 text-xs text-slate-700 flex items-center justify-between">
+                <span>{d}</span>
+                <button
+                  type="button"
+                  disabled={deptSaving}
+                  onClick={() => saveDepartments(departments.filter(x => x !== d))}
+                  className="p-1 text-slate-400 hover:text-rose-600"
+                  title="Eliminar departamento"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {isSuperAdmin && smtp && (
+        <form onSubmit={handleSaveSmtp} className="bg-white rounded-xl border border-slate-200/80 p-5 shadow-xs space-y-4">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+            <Mail className="w-4 h-4 text-blue-700" />
+            <h3 className="font-bold text-sm text-slate-900">Servidor de correo (SMTP)</h3>
+            <span className={`ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-md ${
+              smtp.source === 'none' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
+            }`}>
+              {smtp.source === 'none' ? 'Sin configurar' : smtp.source === 'env' ? 'Configurado en variables de entorno' : 'Configurado'}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-500">
+            Se usa para los avisos de nuevas respuestas y los reportes programados. Escriba <code className="font-mono">console</code> como servidor para probar sin enviar correos reales (se muestran en el registro del servidor).
+            {smtp.source === 'env' && ' Mientras no guarde datos aquí, se usan las variables SMTP_* del archivo .env.'}
+          </p>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Servidor</label>
+              <input type="text" value={smtp.host} placeholder="smtp.minfin.gob.gt" onChange={(e) => setSmtp({ ...smtp, host: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Puerto</label>
+              <input type="number" min={1} max={65535} value={smtp.port} onChange={(e) => setSmtp({ ...smtp, port: Number(e.target.value) || 587 })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+            <input type="checkbox" checked={smtp.secure} onChange={(e) => setSmtp({ ...smtp, secure: e.target.checked })} className="accent-blue-700" />
+            Conexión segura SSL/TLS directa (normalmente puerto 465; con 587 déjelo apagado)
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Usuario</label>
+              <input type="text" autoComplete="off" value={smtp.user} onChange={(e) => setSmtp({ ...smtp, user: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Contraseña</label>
+              <input type="password" autoComplete="new-password" value={smtpPassword}
+                placeholder={smtp.hasPassword ? '•••••••• (guardada; escriba para cambiarla)' : ''}
+                onChange={(e) => setSmtpPassword(e.target.value)}
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Remitente (From)</label>
+            <input type="text" value={smtp.from} placeholder="Formularios <formularios@minfin.gob.gt>" onChange={(e) => setSmtp({ ...smtp, from: e.target.value })}
+              className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-100 flex-wrap">
+            <div className="flex items-center gap-2">
+              <input type="email" value={testTo} placeholder="correo para la prueba" onChange={(e) => setTestTo(e.target.value)}
+                className="w-56 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+              <button type="button" disabled={testing || !testTo.trim() || smtp.source === 'none'} onClick={handleSmtpTest}
+                className="px-3 py-2 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 rounded-lg flex items-center gap-1.5">
+                {testing && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Enviar prueba
+              </button>
+            </div>
+            <button type="submit" disabled={smtpSaving}
+              className="px-4 py-2 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white rounded-lg text-xs font-semibold flex items-center gap-2">
+              {smtpSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Guardar correo
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-400">Guarde primero y luego envíe la prueba. Dejar el servidor vacío y guardar elimina esta configuración.</p>
+        </form>
       )}
 
       {isSuperAdmin && (
@@ -276,11 +464,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ showToast, isSuperAd
                 type="text"
                 value={settings.allowedDomains}
                 onChange={(e) => setSettings(prev => ({ ...prev, allowedDomains: e.target.value }))}
-                placeholder="@gobierno.cl, @ministerio.cl"
+                placeholder="@minfin.gob.gt"
                 className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-600"
               />
               <p className="text-[11px] text-slate-400 mt-1">
-                Solo cuentas con estos sufijos podrán acceder como creadores o administradores.
+                Los usuarios con rol Administrador o Creador deben tener un correo con alguno de estos dominios (sepárelos con comas). Déjelo vacío para no restringir. Se valida al crear o editar usuarios.
               </p>
             </div>
           </div>
@@ -306,13 +494,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ showToast, isSuperAd
                 <option value="5_years">5 años (Histórico permanente)</option>
                 <option value="indefinite">Indefinido (Sin purga automática)</option>
               </select>
+              {settings.retentionPeriod !== 'indefinite' ? (
+                <p className="text-[11px] text-rose-700 mt-1 font-medium">
+                  Atención: una vez guardada, el sistema eliminará de forma permanente y automática (una vez al día) todas las respuestas
+                  con más antigüedad que este período. Descargue una copia antes de activarla.
+                </p>
+              ) : (
+                <p className="text-[11px] text-slate-400 mt-1">Las respuestas se conservan sin límite de tiempo.</p>
+              )}
             </div>
 
             <div className="space-y-3 pt-2">
               <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
                 <div>
                   <div className="text-xs font-semibold text-slate-900">Registro de Auditoría Integral (Audit Log)</div>
-                  <div className="text-[11px] text-slate-500">Registra modificaciones de formularios y descargas de respuestas</div>
+                  <div className="text-[11px] text-slate-500">Registra inicios de sesión, cambios de formularios, usuarios y ajustes. Si lo desactiva, deja de registrarse nueva actividad</div>
                 </div>
                 <button
                   type="button"

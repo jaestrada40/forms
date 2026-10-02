@@ -14,6 +14,8 @@ import {
   Check
 } from 'lucide-react';
 import { Template, Form } from '../types';
+import { Pagination, usePagination } from '../components/Pagination';
+import { isQuestionField } from '../utils/helpers';
 import { TEMPLATES_CATALOG } from '../data/mockData';
 
 interface TemplatesViewProps {
@@ -48,6 +50,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
       return matchesCat && matchesSearch;
     });
   }, [selectedCategory, searchQuery]);
+  const pg = usePagination(filteredTemplates, `${selectedCategory}|${searchQuery}`, 10);
 
   const getTemplateIcon = (name: string) => {
     switch (name) {
@@ -108,7 +111,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
 
       {/* Templates Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {filteredTemplates.map(tpl => {
+        {pg.pageItems.map(tpl => {
           const Icon = getTemplateIcon(tpl.iconName);
 
           return (
@@ -137,7 +140,7 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
               <div>
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 mb-4">
                   <span>{tpl.department}</span>
-                  <span className="font-mono tabular-nums">{(tpl.form.fields || []).filter(f => f.type !== 'section').length} preguntas</span>
+                  <span className="font-mono tabular-nums">{(tpl.form.fields || []).filter(isQuestionField).length} preguntas</span>
                 </div>
 
                 <button
@@ -155,6 +158,19 @@ export const TemplatesView: React.FC<TemplatesViewProps> = ({
           );
         })}
       </div>
+
+      {filteredTemplates.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200/80 shadow-xs">
+          <Pagination
+            page={pg.page}
+            pageSize={pg.pageSize}
+            total={pg.total}
+            onPageChange={pg.setPage}
+            onPageSizeChange={pg.setPageSize}
+            className="border-t-0"
+          />
+        </div>
+      )}
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import { Form, FormResponse } from '../types';
+import { Form, FormField, FormResponse } from '../types';
 
 export function formatDateSpanish(dateString: string, includeTime = false): string {
   try {
@@ -36,6 +36,31 @@ export function generateFolio(): string {
   return `FOR-${year}-${randomNum}`;
 }
 
+/** Fields that collect an answer (everything except layout blocks: sections, banners and images). */
+export function isQuestionField(field: { type: string }): boolean {
+  return field.type !== 'section' && field.type !== 'banner' && field.type !== 'image';
+}
+
+/** Banner / image placed in the form header, above the title. */
+export function isHeaderMedia(field: { type: string; imagePlacement?: string }): boolean {
+  return (field.type === 'banner' || field.type === 'image') && field.imagePlacement === 'above_title';
+}
+
+/** Whether a field should be shown given the current answers (honours conditional logic). */
+export function isFieldVisible(field: FormField, answers: Record<string, unknown>): boolean {
+  const logic = field.conditionalLogic;
+  if (!logic || !logic.dependsOnFieldId) return true;
+  const parent = answers[logic.dependsOnFieldId];
+  const text = Array.isArray(parent) ? parent.join(', ') : parent === undefined || parent === null ? '' : String(parent);
+  switch (logic.operator) {
+    case 'not_equals': return Array.isArray(parent) ? !parent.includes(logic.value) : text !== logic.value;
+    case 'contains': return Array.isArray(parent) ? parent.includes(logic.value) : text.toLowerCase().includes(logic.value.toLowerCase());
+    case 'is_filled': return text !== '';
+    case 'equals':
+    default: return Array.isArray(parent) ? parent.includes(logic.value) : text === logic.value;
+  }
+}
+
 export function formatAnswerForExport(field: { type: string }, val: unknown): string {
   if (val === undefined || val === null || val === '') return '';
   if (field.type === 'file_upload' && typeof val === 'object' && val !== null && 'name' in val) {
@@ -52,29 +77,36 @@ export function formatAnswerForExport(field: { type: string }, val: unknown): st
   return String(val);
 }
 
+/** Quotes a CSV cell and neutralises spreadsheet formulas (cells starting with = + - @ tab CR). */
+function csvCell(value: unknown): string {
+  const text = String(value ?? '');
+  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
 export function exportResponsesToCSV(form: Form, responses: FormResponse[]) {
   // UTF-8 BOM so Excel recognizes accents correctly
   const BOM = '\uFEFF';
   
   const headers = ['Folio', 'Fecha de Envío', 'Tiempo (s)', 'Correo', 'Departamento'];
   const fieldHeaders = form.fields
-    .filter(f => f.type !== 'section')
-    .map(f => `"${f.title.replace(/"/g, '""')}"`);
+    .filter(isQuestionField)
+    .map(f => csvCell(f.title));
   
   const allHeaders = [...headers, ...fieldHeaders].join(';');
   
   const rows = responses.map(resp => {
     const baseCols = [
-      `"${resp.folio}"`,
-      `"${formatDateSpanish(resp.submittedAt, true)}"`,
+      csvCell(resp.folio),
+      csvCell(formatDateSpanish(resp.submittedAt, true)),
       resp.completionTimeSeconds,
-      `"${resp.respondentEmail || 'Anónimo'}"`,
-      `"${resp.respondentDepartment || 'No especificado'}"`
+      csvCell(resp.respondentEmail || 'Anónimo'),
+      csvCell(resp.respondentDepartment || 'No especificado')
     ];
     
     const fieldCols = form.fields
-      .filter(f => f.type !== 'section')
-      .map(f => `"${formatAnswerForExport(f, resp.answers[f.id]).replace(/"/g, '""')}"`);
+      .filter(isQuestionField)
+      .map(f => csvCell(formatAnswerForExport(f, resp.answers[f.id])));
     
     return [...baseCols, ...fieldCols].join(';');
   });
@@ -92,7 +124,7 @@ export function exportResponsesToCSV(form: Form, responses: FormResponse[]) {
 
 export function exportTableToCSV(filename: string, headers: string[], rows: (string | number)[][]) {
   const BOM = '﻿';
-  const escape = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+  const escape = csvCell;
   const csvContent = BOM + [headers.map(escape).join(';'), ...rows.map(r => r.map(escape).join(';'))].join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -107,7 +139,7 @@ export function exportTableToCSV(filename: string, headers: string[], rows: (str
 
 export function exportResponsesToExcel(form: Form, responses: FormResponse[]) {
   // Generate valid HTML Excel file that Excel opens cleanly as a native table
-  const fields = form.fields.filter(f => f.type !== 'section');
+  const fields = form.fields.filter(isQuestionField);
   
   let tableHtml = `
     <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">

@@ -5,6 +5,7 @@ import {
   Trash2, CopyPlus, Calendar, Mail, FileSpreadsheet, ArrowRight, PlusCircle, Download, Loader2
 } from 'lucide-react';
 import { Form, UserRole } from '../types';
+import { api, ReportScheduleRow } from '../services/api';
 
 interface ModalWrapperProps {
   isOpen: boolean;
@@ -410,24 +411,27 @@ export const DuplicateModal: React.FC<{
 export const InviteUserModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  onInvite: (user: { name: string; email: string; role: UserRole; department: string }) => void;
-}> = ({ isOpen, onClose, onInvite }) => {
+  onInvite: (user: { name: string; email: string; role: UserRole; department: string; password: string }) => void;
+  departments: string[];
+}> = ({ isOpen, onClose, onInvite, departments }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<UserRole>('Creador');
-  const [department, setDepartment] = useState('Recursos Humanos');
+  const [department, setDepartment] = useState('');
+  const [password, setPassword] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !email.trim()) return;
-    onInvite({ name, email, role, department });
+    if (!name.trim() || !email.trim() || password.length < 8 || !(department || departments[0])) return;
+    onInvite({ name, email, role, department: department || departments[0] || '', password });
     setName('');
     setEmail('');
+    setPassword('');
     onClose();
   };
 
   return (
-    <ModalWrapper isOpen={isOpen} onClose={onClose} title="Invitar Nuevo Usuario Institucional">
+    <ModalWrapper isOpen={isOpen} onClose={onClose} title="Crear usuario">
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
@@ -445,12 +449,12 @@ export const InviteUserModal: React.FC<{
 
         <div>
           <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-            Correo Institucional (@gobierno.cl / corporativo)
+            Correo Institucional (@minfin.gob.gt)
           </label>
           <input
             type="email"
             required
-            placeholder="m.sanhueza@gobierno.cl"
+            placeholder="nombre.apellido@minfin.gob.gt"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
@@ -479,21 +483,33 @@ export const InviteUserModal: React.FC<{
               Departamento
             </label>
             <select
-              value={department}
+              value={department || departments[0] || ''}
               onChange={(e) => setDepartment(e.target.value)}
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
             >
-              <option value="Recursos Humanos">Recursos Humanos</option>
-              <option value="Finanzas y Presupuesto">Finanzas y Presupuesto</option>
-              <option value="Tecnología e Informática">Tecnología e Informática</option>
-              <option value="Atención Ciudadana">Atención Ciudadana</option>
-              <option value="Operaciones">Operaciones</option>
+              {departments.length === 0 && <option value="">Cree departamentos en Configuración</option>}
+              {departments.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
         </div>
 
-        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 leading-relaxed">
-          El usuario recibirá un correo con su enlace de activación institucional y credenciales de acceso seguro.
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+            Contraseña inicial
+          </label>
+          <input
+            type="text"
+            required
+            minLength={8}
+            autoComplete="off"
+            placeholder="Mínimo 8 caracteres"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+          />
+          <p className="mt-1 text-[11px] text-slate-500">
+            Comparta esta contraseña con el usuario; podrá cambiarla desde su perfil.
+          </p>
         </div>
 
         <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
@@ -508,7 +524,7 @@ export const InviteUserModal: React.FC<{
             type="submit"
             className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
           >
-            <UserPlus className="w-4 h-4" /> Enviar Invitación
+            <UserPlus className="w-4 h-4" /> Crear usuario
           </button>
         </div>
       </form>
@@ -517,93 +533,179 @@ export const InviteUserModal: React.FC<{
 };
 
 // 6. Schedule Report Modal
+const FREQUENCY_OPTIONS = [
+  { value: 'daily', label: 'Diario (cada mañana 08:00)' },
+  { value: 'weekly', label: 'Semanal (cada lunes 08:00)' },
+  { value: 'biweekly', label: 'Quincenal (días 1 y 15, 08:00)' },
+  { value: 'monthly', label: 'Mensual (primer día hábil, 08:00)' },
+] as const;
+
 export const ScheduleReportModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-  onSchedule: (schedule: { frequency: string; recipients: string[]; format: string }) => void;
-}> = ({ isOpen, onClose, onSchedule }) => {
-  const [frequency, setFrequency] = useState('Semanal (Lunes 08:00 hrs)');
-  const [recipients, setRecipients] = useState('direccion@gobierno.cl, rrhh@gobierno.cl');
-  const [format, setFormat] = useState('PDF Ejecutivo + Hoja Excel');
+  showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
+}> = ({ isOpen, onClose, showToast }) => {
+  const [schedules, setSchedules] = useState<ReportScheduleRow[]>([]);
+  const [mailMode, setMailMode] = useState<'smtp' | 'console' | 'off' | null>(null);
+  const [frequency, setFrequency] = useState<string>('weekly');
+  const [recipients, setRecipients] = useState('');
+  const [includeCsv, setIncludeCsv] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const load = () => api.getReportSchedules().then(setSchedules).catch(() => {});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    load();
+    api.getEmailStatus().then(r => setMailMode(r.mode)).catch(() => setMailMode(null));
+  }, [isOpen]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSchedule({
-      frequency,
-      recipients: recipients.split(',').map(s => s.trim()),
-      format,
-    });
-    onClose();
+    const list = recipients.split(/[,;\s]+/).map(r => r.trim()).filter(Boolean);
+    if (list.length === 0) return;
+    setBusy('create');
+    try {
+      await api.createReportSchedule({ frequency, recipients: list, includeCsv });
+      setRecipients('');
+      await load();
+      showToast('Reporte programado correctamente', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'No fue posible programar el reporte.', 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleSendNow = async (id: string) => {
+    setBusy(id);
+    try {
+      await api.sendReportScheduleNow(id);
+      await load();
+      showToast('Reporte enviado', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'No fue posible enviar el reporte.', 'error');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    setBusy(id);
+    try {
+      await api.deleteReportSchedule(id);
+      await load();
+      showToast('Programación eliminada', 'info');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'No fue posible eliminar la programación.', 'error');
+    } finally {
+      setBusy(null);
+    }
   };
 
   return (
     <ModalWrapper isOpen={isOpen} onClose={onClose} title="Programar Envío Periódico de Reportes">
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-4">
         <p className="text-sm text-slate-600">
-          Genere envíos automáticos de analíticas y KPIs para jefaturas de departamento y comités directivos.
+          Envíe automáticamente por correo un resumen de respuestas por formulario a jefaturas y comités.
         </p>
 
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-            Frecuencia de Envío
-          </label>
-          <select
-            value={frequency}
-            onChange={(e) => setFrequency(e.target.value)}
-            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
-          >
-            <option value="Diario (08:00 hrs)">Diario (Cada mañana 08:00 hrs)</option>
-            <option value="Semanal (Lunes 08:00 hrs)">Semanal (Cada lunes 08:00 hrs)</option>
-            <option value="Quincenal (Días 1 y 15)">Quincenal (Días 1 y 15 de cada mes)</option>
-            <option value="Mensual (Primer día hábil)">Mensual (Primer día hábil de mes)</option>
-          </select>
-        </div>
+        {mailMode === 'off' && (
+          <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg">
+            El servidor de correo no está configurado: las programaciones se guardan, pero no se enviarán hasta que un Administrador lo configure en
+            <strong className="mx-1">Configuración → Servidor de correo (SMTP)</strong>.
+          </div>
+        )}
+        {mailMode === 'console' && (
+          <div className="p-3 bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg">
+            Modo de pruebas: los correos no se envían, se muestran en el registro del servidor.
+          </div>
+        )}
 
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-            Destinatarios (separados por coma)
-          </label>
-          <input
-            type="text"
-            required
-            value={recipients}
-            onChange={(e) => setRecipients(e.target.value)}
-            placeholder="jefatura@gobierno.cl, director@gobierno.cl"
-            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
-          />
-        </div>
+        {schedules.length > 0 && (
+          <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
+            {schedules.map(s => (
+              <div key={s.id} className="p-3 text-xs flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-slate-800">{FREQUENCY_OPTIONS.find(f => f.value === s.frequency)?.label}</div>
+                  <div className="text-slate-500 truncate" title={s.recipients.join(', ')}>{s.recipients.join(', ')}</div>
+                  <div className="text-[11px] text-slate-400">
+                    {s.includeCsv ? 'Resumen + CSV' : 'Solo resumen'} · último envío: {new Date(s.lastSentAt).toLocaleString('es-GT', { dateStyle: 'medium', timeStyle: 'short' })}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    disabled={busy === s.id}
+                    onClick={() => handleSendNow(s.id)}
+                    className="px-2 py-1 text-blue-700 hover:bg-blue-50 rounded font-semibold disabled:opacity-50"
+                  >
+                    Enviar ahora
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy === s.id}
+                    onClick={() => handleDelete(s.id)}
+                    className="px-2 py-1 text-rose-600 hover:bg-rose-50 rounded font-semibold disabled:opacity-50"
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-            Formato de Entrega
-          </label>
-          <select
-            value={format}
-            onChange={(e) => setFormat(e.target.value)}
-            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
-          >
-            <option value="PDF Ejecutivo + Hoja Excel">PDF Ejecutivo + Hoja Excel</option>
-            <option value="Solo Resumen PDF Ejecutivo">Solo Resumen PDF Ejecutivo</option>
-            <option value="Datos Crudos en Excel (.xlsx)">Datos Crudos en Excel (.xlsx)</option>
-          </select>
-        </div>
+        <form onSubmit={handleSubmit} className="space-y-4 pt-1">
+          <div className="text-xs font-bold text-slate-800 uppercase tracking-wider">Nueva programación</div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Frecuencia de Envío</label>
+            <select
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value)}
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+            >
+              {FREQUENCY_OPTIONS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+            </select>
+          </div>
 
-        <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-          >
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
-          >
-            <Mail className="w-4 h-4" /> Confirmar Programación
-          </button>
-        </div>
-      </form>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+              Destinatarios (separados por coma)
+            </label>
+            <input
+              type="text"
+              required
+              value={recipients}
+              onChange={(e) => setRecipients(e.target.value)}
+              placeholder="jefatura@minfin.gob.gt, director@minfin.gob.gt"
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+            />
+          </div>
+
+          <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <input type="checkbox" checked={includeCsv} onChange={(e) => setIncludeCsv(e.target.checked)} className="accent-blue-700" />
+            Adjuntar CSV con las respuestas del período
+          </label>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+            >
+              Cerrar
+            </button>
+            <button
+              type="submit"
+              disabled={busy === 'create'}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-60 rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
+            >
+              <Mail className="w-4 h-4" /> Programar
+            </button>
+          </div>
+        </form>
+      </div>
     </ModalWrapper>
   );
 };

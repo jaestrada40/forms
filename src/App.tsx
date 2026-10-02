@@ -32,6 +32,7 @@ import { ReportsView } from './views/ReportsView';
 import { TemplatesView } from './views/TemplatesView';
 import { UsersView } from './views/UsersView';
 import { SettingsView } from './views/SettingsView';
+import { AuditView } from './views/AuditView';
 
 const PUBLIC_RESPONDER_PATH = /^\/responder\/([^/]+)\/?$/;
 
@@ -51,6 +52,7 @@ function AuthenticatedApp() {
   const [formSaveStatus, setFormSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [users, setUsers] = useState<UserAccount[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
   const [loadingForms, setLoadingForms] = useState(false);
   const [branding, setBranding] = useState<BrandingInfo | null>(null);
   const [brandingLoaded, setBrandingLoaded] = useState(false);
@@ -149,6 +151,7 @@ function AuthenticatedApp() {
     if (authUser) {
       loadForms();
       loadUsers();
+      api.getDepartments().then(setDepartments).catch(() => {});
     }
   }, [authUser, loadForms, loadUsers]);
 
@@ -221,7 +224,7 @@ function AuthenticatedApp() {
       settings: {
         limitOneResponsePerUser: false,
         allowEditResponses: false,
-        collectEmails: true,
+        collectEmails: false,
         confirmationMessage: 'Su respuesta ha sido registrada exitosamente en los sistemas institucionales.',
         notifyEmailOnSubmit: false,
         notificationEmails: [],
@@ -229,7 +232,7 @@ function AuthenticatedApp() {
       },
       fields: [
         { id: `field_title_${Date.now()}`, type: 'short_text', title: 'Nombre y Apellido', placeholder: 'Ej: Juan Pérez Morales', required: true },
-        { id: `field_email_${Date.now() + 1}`, type: 'email', title: 'Correo Institucional', placeholder: 'nombre@gobierno.cl', required: true },
+        { id: `field_email_${Date.now() + 1}`, type: 'email', title: 'Correo Institucional', placeholder: 'nombre@minfin.gob.gt', required: true },
       ],
     };
 
@@ -262,7 +265,7 @@ function AuthenticatedApp() {
       settings: {
         limitOneResponsePerUser: false,
         allowEditResponses: false,
-        collectEmails: true,
+        collectEmails: false,
         confirmationMessage: 'Agradecemos su participación en este proceso institucional.',
         notifyEmailOnSubmit: false,
         notificationEmails: [],
@@ -338,32 +341,29 @@ function AuthenticatedApp() {
   };
 
   // Submit public response
-  const handleSubmitResponse = async (newResponse: FormResponse) => {
-    try {
-      const created = await api.submitResponse(newResponse.formId, {
-        answers: newResponse.answers,
-        respondentEmail: newResponse.respondentEmail || undefined,
-        respondentName: newResponse.respondentName || undefined,
-        respondentDepartment: newResponse.respondentDepartment || undefined,
-        completionTimeSeconds: newResponse.completionTimeSeconds,
-      });
-      const saved: FormResponse = { ...newResponse, id: created.id, folio: created.folio, submittedAt: created.submitted_at };
-      setResponses(prev => [saved, ...prev]);
-      setForms(prev => prev.map(f => (f.id === newResponse.formId ? { ...f, responseCount: (f.responseCount || 0) + 1 } : f)));
-      showToast(`Respuesta guardada con folio ${saved.folio}`, 'success');
-    } catch (error) {
-      reportError(error, 'No fue posible registrar la respuesta.');
-    }
+  const handleSubmitResponse = async (newResponse: FormResponse): Promise<{ folio: string; submittedAt: string }> => {
+    const created = await api.submitResponse(newResponse.formId, {
+      answers: newResponse.answers,
+      respondentEmail: newResponse.respondentEmail || undefined,
+      respondentName: newResponse.respondentName || undefined,
+      respondentDepartment: newResponse.respondentDepartment || undefined,
+      completionTimeSeconds: newResponse.completionTimeSeconds,
+    });
+    const saved: FormResponse = { ...newResponse, id: created.id, folio: created.folio, submittedAt: created.submitted_at };
+    setResponses(prev => [saved, ...prev]);
+    setForms(prev => prev.map(f => (f.id === newResponse.formId ? { ...f, responseCount: (f.responseCount || 0) + 1 } : f)));
+    showToast(`Respuesta guardada con folio ${saved.folio}`, 'success');
+    return { folio: saved.folio, submittedAt: saved.submittedAt };
   };
 
   // Invite user
-  const handleInviteUser = async (data: { name: string; email: string; role: UserRole; department: string }) => {
+  const handleInviteUser = async (data: { name: string; email: string; role: UserRole; department: string; password: string }) => {
     try {
       const row = await api.inviteUser(data);
       setUsers(prev => [userRowToUser(row), ...prev]);
-      showToast(`Invitación oficial enviada a ${data.email}`, 'success');
+      showToast(`Usuario ${data.email} creado correctamente`, 'success');
     } catch (error) {
-      reportError(error, 'No fue posible invitar al usuario.');
+      reportError(error, 'No fue posible crear el usuario.');
     }
   };
 
@@ -374,6 +374,25 @@ function AuthenticatedApp() {
       setUsers(prev => prev.map(u => (u.id === userId ? userRowToUser(row) : u)));
     } catch (error) {
       reportError(error, 'No fue posible actualizar el rol del usuario.');
+    }
+  };
+
+  const handleEditUser = async (userId: string, data: { name: string; email: string; department: string }) => {
+    try {
+      const row = await api.updateUser(userId, data);
+      setUsers(prev => prev.map(u => (u.id === userId ? userRowToUser(row) : u)));
+      showToast('Datos del usuario actualizados', 'success');
+    } catch (error) {
+      reportError(error, 'No fue posible actualizar el usuario.');
+    }
+  };
+
+  const handleChangeUserPassword = async (userId: string, password: string) => {
+    try {
+      await api.updateUser(userId, { password });
+      showToast('Contraseña actualizada correctamente', 'success');
+    } catch (error) {
+      reportError(error, 'No fue posible cambiar la contraseña.');
     }
   };
 
@@ -449,6 +468,8 @@ function AuthenticatedApp() {
           }}
           currentUser={authUser}
           onLogout={handleLogout}
+          onNavigate={setCurrentScreen}
+          onOpenFormResponses={(id) => { setActiveFormId(id); setCurrentScreen('responses'); }}
           onProfileUpdated={setAuthUser}
           showToast={showToast}
         />
@@ -501,6 +522,7 @@ function AuthenticatedApp() {
                   form={activeForm}
                   onUpdateForm={handleUpdateForm}
                   saveStatus={formSaveStatus}
+                  departments={departments}
                   onBack={() => setCurrentScreen('forms')}
                   onShowPublicView={openPublicPreview}
                   onOpenShareModal={(form) => setShareModalForm(form)}
@@ -516,6 +538,7 @@ function AuthenticatedApp() {
                   onSelectForm={setActiveFormId}
                   responses={responses}
                   onToggleAcceptingResponses={handleToggleAcceptingResponses}
+                  institutionName={branding?.name || 'Formularios Institucionales'}
                   showToast={showToast}
                 />
               )}
@@ -525,6 +548,7 @@ function AuthenticatedApp() {
                   forms={forms}
                   responses={responses}
                   onOpenScheduleModal={() => setIsScheduleModalOpen(true)}
+                  institutionName={branding?.name || 'Formularios Institucionales'}
                   showToast={showToast}
                 />
               )}
@@ -542,15 +566,22 @@ function AuthenticatedApp() {
                   onOpenInviteModal={() => setIsInviteUserModalOpen(true)}
                   onUpdateUserRole={handleUpdateUserRole}
                   onResetUserMfa={handleResetUserMfa}
+                  onChangeUserPassword={handleChangeUserPassword}
+                  onEditUser={handleEditUser}
+                  departments={departments}
                   showToast={showToast}
                 />
               )}
+
+              {currentScreen === 'audit' && authUser.role === 'Administrador' && <AuditView />}
 
               {currentScreen === 'settings' && (
                 <SettingsView
                   showToast={showToast}
                   isSuperAdmin={authUser.role === 'Administrador'}
                   onBrandingUpdated={(b) => setBranding(b)}
+                  departments={departments}
+                  onDepartmentsChange={setDepartments}
                 />
               )}
             </>
@@ -599,14 +630,13 @@ function AuthenticatedApp() {
         isOpen={isInviteUserModalOpen}
         onClose={() => setIsInviteUserModalOpen(false)}
         onInvite={handleInviteUser}
+        departments={departments}
       />
 
       <ScheduleReportModal
         isOpen={isScheduleModalOpen}
         onClose={() => setIsScheduleModalOpen(false)}
-        onSchedule={(data) => {
-          showToast(`Reporte programado con frecuencia ${data.frequency}`, 'success');
-        }}
+        showToast={showToast}
       />
     </div>
   );

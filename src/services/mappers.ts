@@ -11,7 +11,7 @@ const defaultDesign: FormDesign = {
 const defaultSettings = (department: string): FormSettings => ({
   limitOneResponsePerUser: false,
   allowEditResponses: false,
-  collectEmails: true,
+  collectEmails: false,
   confirmationMessage: 'Su respuesta ha sido registrada exitosamente en los sistemas institucionales.',
   notifyEmailOnSubmit: false,
   notificationEmails: [],

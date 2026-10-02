@@ -25,14 +25,15 @@ export const PublicResponderPage: React.FC<PublicResponderPageProps> = ({ formId
     return () => { cancelled = true; };
   }, [formId]);
 
-  const handleSubmitResponse = (newResponse: FormResponse) => {
-    api.submitResponse(newResponse.formId, {
+  const handleSubmitResponse = async (newResponse: FormResponse) => {
+    const created = await api.submitResponse(newResponse.formId, {
       answers: newResponse.answers,
       respondentEmail: newResponse.respondentEmail || undefined,
       respondentName: newResponse.respondentName || undefined,
       respondentDepartment: newResponse.respondentDepartment || undefined,
       completionTimeSeconds: newResponse.completionTimeSeconds,
-    }).catch(err => console.error('No fue posible registrar la respuesta:', err));
+    });
+    return { folio: created.folio, submittedAt: created.submitted_at };
   };
 
   if (loading) {

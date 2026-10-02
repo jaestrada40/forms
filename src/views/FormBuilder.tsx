@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Save,
@@ -39,9 +39,16 @@ import {
   IdCard,
   Receipt,
   MapPin,
-  Sparkles
+  Sparkles,
+  Image as ImageIcon,
+  PanelTop
 } from 'lucide-react';
+import { api } from '../services/api';
 import { Form, FormField, FormFieldType, FormDesign, FormSettings } from '../types';
+import { ColorPicker } from '../components/ColorPicker';
+import { isHeaderMedia, isQuestionField } from '../utils/helpers';
+import { FIELD_WIDTHS, fieldSpan, getFormTheme, getSubmitButton, DEFAULT_SUBMIT_TEXT, readImageAsDataUrl } from '../utils/formTheme';
+import { FormBannerBar, FormMediaBlock, HeaderBanners, HeaderLogos, DEFAULT_IMAGE_WIDTH, DEFAULT_BANNER_HEIGHT } from '../components/FormBranding';
 import { PRESET_FIELDS } from '../data/presetFields';
 import { GUATEMALA_DEPARTMENT_NAMES } from '../data/guatemalaLocations';
 
@@ -51,6 +58,7 @@ interface FormBuilderProps {
   form: Form;
   onUpdateForm: (updated: Form) => void;
   saveStatus: FormSaveStatus;
+  departments: string[];
   onBack: () => void;
   onShowPublicView: (formId: string) => void;
   onOpenShareModal: (form: Form) => void;
@@ -61,15 +69,15 @@ interface FormBuilderProps {
 const SaveStatusBadge: React.FC<{ status: FormSaveStatus }> = ({ status }) => {
   if (status === 'saving') {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-[11px] font-semibold border border-amber-200">
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-[11px] font-semibold border border-amber-200">
         <Loader2 className="w-3 h-3 animate-spin" />
-        Guardando cambios…
+        <span className="hidden 2xl:inline">Guardando cambios…</span><span className="2xl:hidden">Guardando…</span>
       </span>
     );
   }
   if (status === 'error') {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold border border-rose-200">
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 text-[11px] font-semibold border border-rose-200">
         <AlertCircle className="w-3 h-3" />
         No se pudo guardar
       </span>
@@ -78,12 +86,12 @@ const SaveStatusBadge: React.FC<{ status: FormSaveStatus }> = ({ status }) => {
   return (
     <span key={status === 'saved' ? 'saved-flash' : 'idle'} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200 animate-in fade-in zoom-in-95 duration-200">
       <Check className="w-3 h-3" />
-      Todos los cambios guardados
+      <span className="hidden 2xl:inline">Todos los cambios guardados</span><span className="2xl:hidden">Guardado</span>
     </span>
   );
 };
 
-const FIELD_CATALOG: { type: FormFieldType; label: string; icon: any; category: 'Texto' | 'Opciones' | 'Avanzados' }[] = [
+const FIELD_CATALOG: { type: FormFieldType; label: string; icon: any; category: 'Texto' | 'Opciones' | 'Avanzados' | 'Multimedia' }[] = [
   { type: 'short_text', label: 'Texto corto', icon: Type, category: 'Texto' },
   { type: 'paragraph', label: 'Párrafo', icon: AlignLeft, category: 'Texto' },
   { type: 'number', label: 'Número', icon: Hash, category: 'Texto' },
@@ -101,24 +109,70 @@ const FIELD_CATALOG: { type: FormFieldType; label: string; icon: any; category: 
   { type: 'matrix', label: 'Matriz de cuadrícula', icon: Grid, category: 'Avanzados' },
   { type: 'file_upload', label: 'Carga de archivo', icon: Upload, category: 'Avanzados' },
   { type: 'section', label: 'Nueva sección', icon: Divide, category: 'Avanzados' },
+  { type: 'banner', label: 'Banner (imagen ancha)', icon: PanelTop, category: 'Multimedia' },
+  { type: 'image', label: 'Imagen o logo', icon: ImageIcon, category: 'Multimedia' },
 ];
 
 export const FormBuilder: React.FC<FormBuilderProps> = ({
   form,
   onUpdateForm,
   saveStatus,
+  departments,
   onBack,
   onShowPublicView,
   onOpenShareModal,
   onOpenPublishModal,
   showToast
 }) => {
+  const theme = getFormTheme(form.design);
+  const [mailMode, setMailMode] = useState<'smtp' | 'console' | 'off' | null>(null);
+  const [notifyEmailsText, setNotifyEmailsText] = useState((form.settings.notificationEmails || []).join(', '));
+  const submitButton = getSubmitButton(form.design);
+  const requiresEmail = !!(form.settings.collectEmails || form.settings.limitOneResponsePerUser);
   const [activeTab, setActiveTab] = useState<'questions' | 'design' | 'settings' | 'preview'>('questions');
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(
     form.fields.length > 0 ? form.fields[0].id : null
   );
+  const [emailSelected, setEmailSelected] = useState(false);
+  useEffect(() => { if (selectedFieldId) setEmailSelected(false); }, [selectedFieldId]);
+
+  useEffect(() => {
+    api.getEmailStatus().then(r => setMailMode(r.mode)).catch(() => {});
+  }, []);
 
   const selectedField = form.fields.find(f => f.id === selectedFieldId) || null;
+
+  const previewEmail = (
+    <div className={`col-span-6 ${theme.cardPad} ${theme.card} !shadow-none`}>
+      <label className="block text-sm font-semibold text-slate-800 mb-1">
+        {form.settings.emailLabel || 'Correo electrónico'} <span className="text-rose-500">*</span>
+      </label>
+      {form.settings.emailHelp && <p className="text-xs text-slate-500 mb-2">{form.settings.emailHelp}</p>}
+      <input
+        type="text"
+        disabled
+        placeholder={form.settings.emailPlaceholder || 'nombre@minfin.gob.gt'}
+        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-500 cursor-not-allowed"
+      />
+    </div>
+  );
+
+  const emailCard = (
+    <div
+      onClick={() => { setSelectedFieldId(null); setEmailSelected(true); }}
+      className={`col-span-6 bg-white ${theme.card} ${theme.cardPad} cursor-pointer border-dashed ${emailSelected ? '!border-blue-600 ring-2 ring-blue-600/20' : 'hover:!border-slate-400'}`}
+    >
+      <div className="font-semibold text-sm text-slate-900">
+        {form.settings.emailLabel || 'Correo electrónico'} <span className="text-rose-500 font-bold">*</span>
+      </div>
+      <div className="text-[11px] text-slate-500 mt-0.5">
+        {form.settings.emailHelp || (form.settings.limitOneResponsePerUser ? 'Solo se permite una respuesta por correo electrónico.' : '')}
+      </div>
+      <div className="mt-3 h-8 border border-dashed border-slate-300 rounded-lg bg-slate-50 px-3 flex items-center text-xs text-slate-400 pointer-events-none">
+        {form.settings.emailPlaceholder || 'nombre@minfin.gob.gt'}
+      </div>
+    </div>
+  );
 
   // Mutator helper
   const updateFormState = (newForm: Form) => {
@@ -133,6 +187,8 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
     const id = `field_${Date.now()}`;
     const defaultTitles: Partial<Record<FormFieldType, string>> = {
       section: 'Nueva Sección',
+      banner: 'Banner',
+      image: 'Logo o imagen',
       dpi: 'Número de DPI (CUI)',
       nit: 'NIT',
       guatemala_location: 'Departamento y Municipio de residencia',
@@ -142,10 +198,22 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
       id,
       type,
       title: defaultTitles[type] || 'Pregunta sin título',
-      required: type !== 'section',
+      required: isQuestionField({ type }),
       description: '',
       placeholder: '',
     };
+
+    if (type === 'banner' || type === 'image') {
+      newField.imagePlacement = 'above_title'; // logos and banners go in the header by default
+    }
+    if (type === 'banner') {
+      newField.imageWidth = 100;
+      newField.imageHeight = DEFAULT_BANNER_HEIGHT;
+    }
+    if (type === 'image') {
+      newField.imageWidth = DEFAULT_IMAGE_WIDTH;
+      newField.imageAlign = 'left';
+    }
 
     if (type === 'phone') {
       newField.placeholder = '+502 ';
@@ -255,6 +323,10 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
   };
 
   // Update selected field property
+  const handleUpdateSelectedFieldById = (id: string, patch: Partial<FormField>) => {
+    updateFormState({ ...form, fields: form.fields.map(f => (f.id === id ? { ...f, ...patch } : f)) });
+  };
+
   const handleUpdateSelectedField = (patch: Partial<FormField>) => {
     if (!selectedFieldId) return;
     const updated = form.fields.map(f => {
@@ -270,7 +342,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
     <div className="flex flex-col h-[calc(100vh-4rem)] -m-4 sm:-m-6 bg-slate-100 overflow-hidden">
       {/* Top Builder Navigation Bar */}
       <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2.5 flex items-center justify-between shrink-0 shadow-xs z-20">
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-3 min-w-0 flex-1 mr-3">
           <button
             onClick={onBack}
             className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
@@ -279,7 +351,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
             <ArrowLeft className="w-4 h-4" />
           </button>
           
-          <div className="min-w-0">
+          <div className="min-w-0 overflow-hidden">
             <input
               type="text"
               value={form.title}
@@ -296,14 +368,14 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
         </div>
 
         {/* Center Tabs */}
-        <div className="hidden md:flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+        <div className="hidden md:flex items-center gap-1 p-1 bg-slate-100 rounded-lg shrink-0 whitespace-nowrap">
           <button
             onClick={() => setActiveTab('questions')}
             className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
               activeTab === 'questions' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Preguntas ({form.fields.filter(f => f.type !== 'section').length})
+            Preguntas ({form.fields.filter(isQuestionField).length})
           </button>
           <button
             onClick={() => setActiveTab('design')}
@@ -339,7 +411,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
             title="Previsualizar en modo respondedor"
           >
             <Eye className="w-3.5 h-3.5" />
-            <span>Previsualizar</span>
+            <span className="hidden xl:inline">Previsualizar</span>
           </button>
 
           <button
@@ -347,7 +419,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
             className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-medium transition-colors"
           >
             <Share2 className="w-3.5 h-3.5" />
-            <span>Compartir</span>
+            <span className="hidden xl:inline">Compartir</span>
           </button>
 
           <button
@@ -394,7 +466,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
             </div>
 
             <div className="p-3 space-y-4">
-              {['Texto', 'Opciones', 'Avanzados'].map((category) => (
+              {['Texto', 'Opciones', 'Avanzados', 'Multimedia'].map((category) => (
                 <div key={category}>
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 px-1">
                     {category}
@@ -440,14 +512,14 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
           </aside>
 
           {/* CENTER COLUMN: Interactive Editable Canvas (Flex-1) */}
-          <main className="flex-1 overflow-y-auto p-6 md:p-8 flex justify-center">
-            <div className="w-full max-w-2xl space-y-4 pb-16">
+          <main className="flex-1 overflow-y-auto p-6 md:p-8 flex justify-center" style={theme.fontStyle}>
+            <div className={`w-full max-w-2xl ${theme.gap} pb-16`}>
               {/* Form Title & Description Card */}
-              <div className="bg-white rounded-xl border border-slate-200/80 p-6 shadow-xs relative overflow-hidden">
-                <div 
-                  className="absolute top-0 left-0 right-0 h-2 bg-blue-700" 
-                  style={{ backgroundColor: form.design.primaryColor || '#1D4ED8' }}
-                />
+              <div className={`bg-white ${theme.card} relative overflow-hidden`}>
+                <HeaderBanners fields={form.fields} />
+                <FormBannerBar design={form.design} />
+                <div className={theme.headerPad}>
+                <HeaderLogos fields={form.fields} />
                 <input
                   type="text"
                   value={form.title}
@@ -466,7 +538,11 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   <span>Unidad responsable: <span className="font-semibold text-slate-700">{form.department}</span></span>
                   <span>Creado por: {form.creator.name}</span>
                 </div>
+                </div>
               </div>
+
+              <div className={`grid grid-cols-6 ${theme.gridGap}`}>
+              {requiresEmail && form.settings.emailPosition !== 'bottom' && emailCard}
 
               {/* Questions List */}
               {form.fields.map((field, index) => {
@@ -478,7 +554,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                     <div
                       key={field.id}
                       onClick={() => setSelectedFieldId(field.id)}
-                      className={`rounded-xl border p-5 transition-all cursor-pointer ${
+                      className={`col-span-6 rounded-xl border p-5 transition-all cursor-pointer ${
                         isSelected
                           ? 'border-blue-600 bg-blue-50/30 ring-2 ring-blue-600/20 shadow-xs'
                           : 'border-slate-300 bg-slate-50 hover:border-slate-400'
@@ -535,24 +611,24 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   <div
                     key={field.id}
                     onClick={() => setSelectedFieldId(field.id)}
-                    className={`bg-white rounded-xl border p-5 transition-all cursor-pointer relative ${
+                    className={`${isQuestionField(field) ? fieldSpan(field.width) : 'col-span-6'} bg-white ${theme.card} ${theme.cardPad} transition-all cursor-pointer relative ${
                       isSelected
-                        ? 'border-blue-600 ring-2 ring-blue-600/20 shadow-md'
-                        : 'border-slate-200 hover:border-slate-300 shadow-xs'
+                        ? '!border-blue-600 ring-2 ring-blue-600/20'
+                        : 'hover:!border-slate-400'
                     }`}
                   >
                     {/* Header: Title + Type badge */}
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div className="flex-1">
+                    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 mb-2">
+                      <div className="flex-1 min-w-[8rem]">
                         <div className="flex items-center gap-1.5">
                           <input
                             type="text"
                             value={field.title}
                             onChange={(e) => handleUpdateSelectedField({ title: e.target.value })}
                             className="w-full font-semibold text-sm text-slate-900 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-600 focus:outline-hidden pb-0.5"
-                            placeholder="Escriba la pregunta..."
+                            placeholder={isQuestionField(field) ? 'Escriba la pregunta...' : 'Descripción de la imagen (texto alternativo)'}
                           />
-                          {field.required && (
+                          {field.required && isQuestionField(field) && (
                             <span className="text-rose-500 font-bold shrink-0">*</span>
                           )}
                         </div>
@@ -565,6 +641,15 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
 
                       {/* Field Actions */}
                       <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                        {(field.type === 'banner' || field.type === 'image') && (
+                          <button
+                            onClick={() => handleUpdateSelectedFieldById(field.id, { imagePlacement: isHeaderMedia(field) ? 'in_form' : 'above_title' })}
+                            className={`p-1 rounded ${isHeaderMedia(field) ? 'text-blue-700 bg-blue-50' : 'text-slate-400 hover:text-blue-700'}`}
+                            title={isHeaderMedia(field) ? 'Está sobre el título: clic para ponerla dentro del formulario' : 'Poner sobre el título (en el encabezado)'}
+                          >
+                            <PanelTop className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           onClick={() => handleMoveField(index, 'up')}
                           disabled={index === 0}
@@ -599,7 +684,18 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                     </div>
 
                     {/* Field Visual Representation in Canvas */}
-                    <div className="mt-3 pointer-events-none opacity-85">
+                    <div className="mt-3 pointer-events-none opacity-85 overflow-hidden [&>div]:max-w-full">
+                      {(field.type === 'banner' || field.type === 'image') && (
+                        isHeaderMedia(field) ? (
+                          <div className="flex items-center gap-3 p-2 bg-slate-50 border border-dashed border-slate-300 rounded-lg text-[11px] text-slate-500">
+                            {field.imageSrc && <img src={field.imageSrc} alt="" className="h-10 w-16 object-contain rounded bg-white border border-slate-200" style={field.imageBackground ? { backgroundColor: field.imageBackground } : undefined} />}
+                            <span>{field.imageSrc ? 'Se muestra en el encabezado, encima del título (véalo arriba).' : 'Se mostrará encima del título: seleccione una imagen en el panel derecho.'}</span>
+                          </div>
+                        ) : (
+                          <FormMediaBlock field={field} editing />
+                        )
+                      )}
+
                       {field.type === 'short_text' && (
                         <div className="h-8 border border-dashed border-slate-300 rounded-lg bg-slate-50 px-3 flex items-center text-xs text-slate-400">
                           {field.placeholder || 'Respuesta en texto corto...'}
@@ -620,7 +716,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
 
                       {(field.type === 'email' || field.type === 'phone' || field.type === 'dpi' || field.type === 'nit') && (
                         <div className="h-8 border border-dashed border-slate-300 rounded-lg bg-slate-50 px-3 flex items-center text-xs text-slate-400">
-                          {field.placeholder || (field.type === 'email' ? 'nombre@gobierno.cl' : field.type === 'phone' ? '+502 ' : field.type === 'dpi' ? '1234567890101' : '12345678-9')}
+                          {field.placeholder || (field.type === 'email' ? 'nombre@minfin.gob.gt' : field.type === 'phone' ? '+502 ' : field.type === 'dpi' ? '1234567890101' : '12345678-9')}
                         </div>
                       )}
 
@@ -712,6 +808,9 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   </div>
                 );
               })}
+
+              {requiresEmail && form.settings.emailPosition === 'bottom' && emailCard}
+              </div>
             </div>
           </main>
 
@@ -724,7 +823,76 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
               <Settings2 className="w-4 h-4 text-slate-400" />
             </div>
 
-            {selectedField ? (
+            {!selectedField && emailSelected && requiresEmail ? (
+              <div className="p-4 space-y-4 text-xs">
+                <p className="text-[11px] text-slate-500">
+                  Campo de correo que se agrega solo porque el formulario solicita el correo de quien responde.
+                </p>
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1">Etiqueta</label>
+                  <input
+                    type="text"
+                    value={form.settings.emailLabel ?? ''}
+                    placeholder="Correo electrónico"
+                    onChange={(e) => updateFormState({ ...form, settings: { ...form.settings, emailLabel: e.target.value || undefined } })}
+                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1">Texto de ayuda</label>
+                  <textarea
+                    rows={2}
+                    value={form.settings.emailHelp ?? ''}
+                    placeholder="Instrucción adicional..."
+                    onChange={(e) => updateFormState({ ...form, settings: { ...form.settings, emailHelp: e.target.value || undefined } })}
+                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 resize-none"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1">Texto de ejemplo (placeholder)</label>
+                  <input
+                    type="text"
+                    value={form.settings.emailPlaceholder ?? ''}
+                    placeholder="nombre@minfin.gob.gt"
+                    onChange={(e) => updateFormState({ ...form, settings: { ...form.settings, emailPlaceholder: e.target.value || undefined } })}
+                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">Posición</label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {([{ v: 'top' as const, l: 'Al inicio' }, { v: 'bottom' as const, l: 'Al final' }]).map(o => (
+                      <button
+                        key={o.v}
+                        type="button"
+                        onClick={() => updateFormState({ ...form, settings: { ...form.settings, emailPosition: o.v } })}
+                        className={`py-1.5 rounded border text-[11px] font-medium ${
+                          (form.settings.emailPosition || 'top') === o.v ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {o.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateFormState({ ...form, settings: { ...form.settings, collectEmails: false, limitOneResponsePerUser: false } });
+                      setEmailSelected(false);
+                      showToast('Campo de correo quitado (también se desactivó el límite de 1 respuesta por correo).', 'info');
+                    }}
+                    className="px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg"
+                  >
+                    Quitar campo de correo
+                  </button>
+                  {form.settings.limitOneResponsePerUser && (
+                    <p className="text-[10px] text-slate-400 mt-1">Quitarlo desactiva el límite de 1 respuesta por correo.</p>
+                  )}
+                </div>
+              </div>
+            ) : selectedField ? (
               <div className="p-4 space-y-5 text-xs">
                 {/* Field Title */}
                 <div>
@@ -739,7 +907,160 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   />
                 </div>
 
+                {(selectedField.type === 'banner' || selectedField.type === 'image') && (
+                  <div className="space-y-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                    <div>
+                      <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">Imagen</label>
+                      <div className="flex items-center gap-2">
+                        <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-white border border-blue-200 hover:bg-blue-50 rounded-lg cursor-pointer">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{selectedField.imageSrc ? 'Cambiar imagen' : 'Subir imagen'}</span>
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              e.target.value = '';
+                              if (!file) return;
+                              try {
+                                handleUpdateSelectedField({ imageSrc: await readImageAsDataUrl(file) });
+                              } catch (err) {
+                                showToast(err instanceof Error ? err.message : 'No fue posible cargar la imagen.', 'error');
+                              }
+                            }}
+                          />
+                        </label>
+                        {selectedField.imageSrc && (
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateSelectedField({ imageSrc: undefined })}
+                            className="px-2 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg"
+                          >
+                            Quitar
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1">PNG, JPG, WEBP o SVG.</p>
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">Ubicación</label>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {([
+                          { v: 'in_form' as const, l: 'En el formulario' },
+                          { v: 'above_title' as const, l: 'Sobre el título' },
+                        ]).map(o => (
+                          <button
+                            key={o.v}
+                            type="button"
+                            onClick={() => handleUpdateSelectedField({ imagePlacement: o.v })}
+                            className={`py-1.5 rounded border text-[11px] font-medium ${
+                              (selectedField.imagePlacement || 'in_form') === o.v ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            {o.l}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        {selectedField.imagePlacement === 'above_title'
+                          ? 'Aparece en el encabezado, encima del título del formulario.'
+                          : 'Aparece en el lugar que ocupa en la lista de campos.'}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">Color de fondo</label>
+                      <ColorPicker value={selectedField.imageBackground} onChange={(hex) => handleUpdateSelectedField({ imageBackground: hex })} noneLabel="Sin fondo" />
+                    </div>
+
+                    {selectedField.type === 'image' ? (
+                      <>
+                        <div>
+                          <label className="flex items-center justify-between font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">
+                            <span>Tamaño</span>
+                            <span className="font-mono text-slate-500 normal-case">{selectedField.imageWidth || DEFAULT_IMAGE_WIDTH}% del ancho</span>
+                          </label>
+                          <input
+                            type="range"
+                            min={10}
+                            max={100}
+                            step={5}
+                            value={selectedField.imageWidth || DEFAULT_IMAGE_WIDTH}
+                            onChange={(e) => handleUpdateSelectedField({ imageWidth: Number(e.target.value) })}
+                            className="w-full accent-blue-700"
+                          />
+                          <div className="flex gap-1.5 mt-1.5">
+                            {[{ l: 'Pequeño', v: 20 }, { l: 'Mediano', v: 40 }, { l: 'Grande', v: 70 }, { l: 'Completo', v: 100 }].map(o => (
+                              <button
+                                key={o.v}
+                                type="button"
+                                onClick={() => handleUpdateSelectedField({ imageWidth: o.v })}
+                                className={`flex-1 py-1 rounded border text-[10px] font-medium ${
+                                  (selectedField.imageWidth || DEFAULT_IMAGE_WIDTH) === o.v ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                }`}
+                              >
+                                {o.l}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">Alineación</label>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {(['left', 'center', 'right'] as const).map(pos => (
+                              <button
+                                key={pos}
+                                type="button"
+                                onClick={() => handleUpdateSelectedField({ imageAlign: pos })}
+                                className={`py-1.5 rounded border text-[11px] font-medium ${
+                                  (selectedField.imageAlign || 'left') === pos ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                }`}
+                              >
+                                {pos === 'left' ? 'Izquierda' : pos === 'center' ? 'Centro' : 'Derecha'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        <label className="flex items-center justify-between font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">
+                          <span>Altura</span>
+                          <span className="font-mono text-slate-500 normal-case">{selectedField.imageHeight || DEFAULT_BANNER_HEIGHT} px</span>
+                        </label>
+                        <input
+                          type="range"
+                          min={80}
+                          max={400}
+                          step={10}
+                          value={selectedField.imageHeight || DEFAULT_BANNER_HEIGHT}
+                          onChange={(e) => handleUpdateSelectedField({ imageHeight: Number(e.target.value) })}
+                          className="w-full accent-blue-700"
+                        />
+                        <div className="grid grid-cols-2 gap-1.5 mt-2">
+                          {([{ v: 'cover' as const, l: 'Recortar para llenar' }, { v: 'contain' as const, l: 'Mostrar completa' }]).map(o => (
+                            <button
+                              key={o.v}
+                              type="button"
+                              onClick={() => handleUpdateSelectedField({ imageFit: o.v })}
+                              className={`py-1.5 rounded border text-[11px] font-medium ${
+                                (selectedField.imageFit || 'cover') === o.v ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              {o.l}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1">El banner ocupa todo el ancho. "Mostrar completa" evita recortes y deja ver el color de fondo a los lados.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Help text */}
+                {isQuestionField(selectedField) && (
                 <div>
                   <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1">
                     Texto de ayuda o aclaración
@@ -752,9 +1073,37 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                     className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 resize-none"
                   />
                 </div>
+                )}
+
+                {/* Width / columns */}
+                {isQuestionField(selectedField) && (
+                  <div>
+                    <label className="block font-semibold text-slate-700 uppercase tracking-wider text-[10px] mb-1.5">
+                      Ancho en el formulario
+                    </label>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {FIELD_WIDTHS.map(w => (
+                        <button
+                          key={w.value}
+                          type="button"
+                          title={w.hint}
+                          onClick={() => handleUpdateSelectedField({ width: w.value })}
+                          className={`py-1.5 rounded border text-[11px] font-medium ${
+                            (selectedField.width || 'full') === w.value ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          {w.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Los campos seguidos con ancho parcial se acomodan en la misma fila (1/2 + 1/2, 1/3 + 1/3 + 1/3, 2/3 + 1/3). En celular siempre ocupan toda la fila.
+                    </p>
+                  </div>
+                )}
 
                 {/* Required Toggle */}
-                {selectedField.type !== 'section' && (
+                {isQuestionField(selectedField) && (
                   <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
                     <div>
                       <div className="font-semibold text-slate-800">Respuesta obligatoria</div>
@@ -1109,7 +1458,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   >
                     <option value="none">Sin condición (Siempre visible)</option>
                     {form.fields
-                      .filter(f => f.id !== selectedField.id && f.type !== 'section')
+                      .filter(f => f.id !== selectedField.id && isQuestionField(f))
                       .map(f => (
                         <option key={f.id} value={f.id}>
                           Depende de: {f.title.slice(0, 24)}...
@@ -1129,7 +1478,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
       ) : activeTab === 'design' ? (
         /* DESIGN TAB */
         <div className="flex-1 overflow-y-auto p-6 md:p-10 flex justify-center bg-slate-50">
-          <div className="w-full max-w-xl bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-6">
+          <div className="w-full max-w-xl self-start bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-6">
             <div>
               <h3 className="text-base font-bold text-slate-900 mb-1">Identidad Visual y Tema</h3>
               <p className="text-xs text-slate-500">
@@ -1142,30 +1491,10 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
                 Color Institucional Primario
               </label>
-              <div className="flex items-center gap-3">
-                {[
-                  { name: 'Azul Institucional', hex: '#1D4ED8' },
-                  { name: 'Azul Marino', hex: '#1E3A8A' },
-                  { name: 'Verde Estado', hex: '#059669' },
-                  { name: 'Gris Ejecutivo', hex: '#334155' },
-                  { name: 'Índigo Moderno', hex: '#4F46E5' },
-                ].map((color) => (
-                  <button
-                    key={color.hex}
-                    onClick={() => updateFormState({
-                      ...form,
-                      design: { ...form.design, primaryColor: color.hex }
-                    })}
-                    className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${
-                      form.design.primaryColor === color.hex ? 'ring-2 ring-offset-2 ring-slate-900 scale-105' : 'hover:scale-105'
-                    }`}
-                    style={{ backgroundColor: color.hex }}
-                    title={color.name}
-                  >
-                    {form.design.primaryColor === color.hex && <Check className="w-4 h-4 text-white" />}
-                  </button>
-                ))}
-              </div>
+              <ColorPicker
+                value={form.design.primaryColor}
+                onChange={(hex) => updateFormState({ ...form, design: { ...form.design, primaryColor: hex || '#1D4ED8' } })}
+              />
             </div>
 
             {/* Typography */}
@@ -1181,6 +1510,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                       ...form,
                       design: { ...form.design, fontFamily: font }
                     })}
+                    style={getFormTheme({ fontFamily: font }).fontStyle}
                     className={`p-3 rounded-lg border text-xs font-medium capitalize text-center ${
                       form.design.fontFamily === font
                         ? 'border-blue-600 bg-blue-50/50 text-blue-700 font-semibold'
@@ -1216,13 +1546,52 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   </button>
                 ))}
               </div>
+              <p className="text-[11px] text-slate-500 mt-2">
+                {form.design.themeStyle === 'clean'
+                  ? 'Espaciado amplio, bordes muy redondeados y sombra suave.'
+                  : form.design.themeStyle === 'compact'
+                    ? 'Espaciado reducido y bordes definidos: más preguntas visibles por pantalla.'
+                    : 'Equilibrio entre espacio y estructura, con bordes y sombra sutiles.'}
+              </p>
+            </div>
+
+            {/* Submit button */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+                Botón de Enviar
+              </label>
+              <div className="space-y-3">
+                <div>
+                  <span className="block text-[11px] text-slate-500 mb-1">Texto del botón</span>
+                  <input
+                    type="text"
+                    maxLength={40}
+                    value={form.design.submitButtonText || ''}
+                    placeholder={DEFAULT_SUBMIT_TEXT}
+                    onChange={(e) => updateFormState({ ...form, design: { ...form.design, submitButtonText: e.target.value || undefined } })}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+                  />
+                </div>
+                <div>
+                  <span className="block text-[11px] text-slate-500 mb-1">Color del botón</span>
+                  <ColorPicker
+                    value={form.design.submitButtonColor}
+                    onChange={(hex) => updateFormState({ ...form, design: { ...form.design, submitButtonColor: hex } })}
+                    noneLabel="Igual al color primario"
+                  />
+                </div>
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between">
+                  <span className="text-[11px] text-slate-500">Vista previa</span>
+                  <span style={submitButton.style} className="px-5 py-2 rounded-lg text-xs font-semibold shadow-xs">{submitButton.text}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       ) : activeTab === 'settings' ? (
         /* SETTINGS TAB */
         <div className="flex-1 overflow-y-auto p-6 md:p-10 flex justify-center bg-slate-50">
-          <div className="w-full max-w-xl bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-6">
+          <div className="w-full max-w-xl self-start bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-6">
             <div>
               <h3 className="text-base font-bold text-slate-900 mb-1">Configuración del Formulario</h3>
               <p className="text-xs text-slate-500">
@@ -1231,61 +1600,122 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
             </div>
 
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
-                <div>
-                  <div className="text-xs font-semibold text-slate-900">Limitar a 1 respuesta por usuario</div>
-                  <div className="text-[11px] text-slate-500">Requiere validar correo o sesión institucional</div>
+              {([
+                {
+                  key: 'collectEmails' as const,
+                  title: 'Solicitar correo electrónico',
+                  desc: 'El formulario pedirá el correo de quien responde y lo guardará con la respuesta',
+                  checked: !!form.settings.collectEmails || !!form.settings.limitOneResponsePerUser,
+                  disabled: !!form.settings.limitOneResponsePerUser,
+                },
+                {
+                  key: 'limitOneResponsePerUser' as const,
+                  title: 'Limitar a 1 respuesta por correo',
+                  desc: 'Rechaza una segunda respuesta con el mismo correo (solicita el correo automáticamente)',
+                  checked: !!form.settings.limitOneResponsePerUser,
+                  disabled: false,
+                },
+              ]).map(item => (
+                <div key={item.key} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                  <div className="pr-3">
+                    <div className="text-xs font-semibold text-slate-900">{item.title}</div>
+                    <div className="text-[11px] text-slate-500">{item.desc}</div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={item.disabled}
+                    onClick={() => updateFormState({
+                      ...form,
+                      settings: { ...form.settings, [item.key]: !item.checked }
+                    })}
+                    className={`w-10 h-6 shrink-0 flex items-center rounded-full p-1 transition-colors disabled:opacity-60 ${
+                      item.checked ? 'bg-blue-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-white shadow-xs"></div>
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => updateFormState({
-                    ...form,
-                    settings: { ...form.settings, limitOneResponsePerUser: !form.settings.limitOneResponsePerUser }
-                  })}
-                  className={`w-10 h-6 flex items-center rounded-full p-1 transition-colors ${
-                    form.settings.limitOneResponsePerUser ? 'bg-blue-600 justify-end' : 'bg-slate-300 justify-start'
-                  }`}
-                >
-                  <div className="w-4 h-4 rounded-full bg-white shadow-xs"></div>
-                </button>
+              ))}
+
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="pr-3">
+                    <div className="text-xs font-semibold text-slate-900">Notificar por correo cada respuesta</div>
+                    <div className="text-[11px] text-slate-500">Envía un aviso con el folio a estas direcciones</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateFormState({
+                      ...form,
+                      settings: { ...form.settings, notifyEmailOnSubmit: !form.settings.notifyEmailOnSubmit }
+                    })}
+                    className={`w-10 h-6 shrink-0 flex items-center rounded-full p-1 transition-colors ${
+                      form.settings.notifyEmailOnSubmit ? 'bg-blue-600 justify-end' : 'bg-slate-300 justify-start'
+                    }`}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-white shadow-xs"></div>
+                  </button>
+                </div>
+                {form.settings.notifyEmailOnSubmit && (
+                  <>
+                    <input
+                      type="text"
+                      value={notifyEmailsText}
+                      placeholder="jefatura@minfin.gob.gt, rrhh@minfin.gob.gt"
+                      onChange={(e) => {
+                        setNotifyEmailsText(e.target.value);
+                        updateFormState({
+                          ...form,
+                          settings: { ...form.settings, notificationEmails: e.target.value.split(/[,;\s]+/).map(v => v.trim()).filter(Boolean) }
+                        });
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+                    />
+                    {mailMode === 'off' && (
+                      <p className="text-[11px] text-amber-700">
+                        El servidor de correo (SMTP) no está configurado: los avisos no se enviarán hasta que un Administrador lo configure en Configuración → Servidor de correo.
+                      </p>
+                    )}
+                    {mailMode === 'console' && (
+                      <p className="text-[11px] text-blue-700">Modo de pruebas: los avisos se muestran en el registro del servidor, no se envían.</p>
+                    )}
+                  </>
+                )}
               </div>
 
-              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <div className="text-xs font-semibold text-slate-900">Permitir editar respuestas</div>
-                  <div className="text-[11px] text-slate-500">Los usuarios podrán modificar su envío con su folio</div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Fecha de cierre
+                  </label>
+                  <input
+                    type="date"
+                    value={form.settings.closeDate || ''}
+                    onChange={(e) => updateFormState({
+                      ...form,
+                      settings: { ...form.settings, closeDate: e.target.value || undefined }
+                    })}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">Después de este día ya no recibe respuestas.</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => updateFormState({
-                    ...form,
-                    settings: { ...form.settings, allowEditResponses: !form.settings.allowEditResponses }
-                  })}
-                  className={`w-10 h-6 flex items-center rounded-full p-1 transition-colors ${
-                    form.settings.allowEditResponses ? 'bg-blue-600 justify-end' : 'bg-slate-300 justify-start'
-                  }`}
-                >
-                  <div className="w-4 h-4 rounded-full bg-white shadow-xs"></div>
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
                 <div>
-                  <div className="text-xs font-semibold text-slate-900">Notificar por correo cada respuesta</div>
-                  <div className="text-[11px] text-slate-500">Envía un aviso a los correos del departamento</div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Máximo de respuestas
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder="Sin límite"
+                    value={form.settings.maxTotalResponses || ''}
+                    onChange={(e) => updateFormState({
+                      ...form,
+                      settings: { ...form.settings, maxTotalResponses: e.target.value ? Math.max(1, Math.floor(Number(e.target.value))) : undefined }
+                    })}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">Al llegar al límite se cierra solo.</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => updateFormState({
-                    ...form,
-                    settings: { ...form.settings, notifyEmailOnSubmit: !form.settings.notifyEmailOnSubmit }
-                  })}
-                  className={`w-10 h-6 flex items-center rounded-full p-1 transition-colors ${
-                    form.settings.notifyEmailOnSubmit ? 'bg-blue-600 justify-end' : 'bg-slate-300 justify-start'
-                  }`}
-                >
-                  <div className="w-4 h-4 rounded-full bg-white shadow-xs"></div>
-                </button>
               </div>
 
               <div>
@@ -1307,12 +1737,15 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                   Departamento Responsable
                 </label>
-                <input
-                  type="text"
+                <select
                   value={form.department}
                   onChange={(e) => updateFormState({ ...form, department: e.target.value })}
                   className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
-                />
+                >
+                  {[...new Set([form.department, ...departments])].filter(Boolean).map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
               </div>
             </div>
           </div>
@@ -1330,18 +1763,20 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
             </button>
           </div>
 
-          <div className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden">
-            <div 
-              className="h-2.5 w-full"
-              style={{ backgroundColor: form.design.primaryColor || '#1D4ED8' }}
-            />
-            <div className="p-8">
+          <div className={`w-full max-w-2xl bg-white ${theme.card} overflow-hidden`} style={theme.fontStyle}>
+            <HeaderBanners fields={form.fields} />
+            <FormBannerBar design={form.design} />
+            <div className={theme.headerPad}>
+              <HeaderLogos fields={form.fields} />
               <h2 className="text-xl font-bold text-slate-900 mb-2">{form.title}</h2>
               <p className="text-xs text-slate-600 mb-6 leading-relaxed">{form.description}</p>
               
-              <div className="space-y-6">
-                {form.fields.map((f, i) => (
-                  <div key={f.id} className="pt-4 border-t border-slate-100">
+              <div className={`grid grid-cols-6 ${theme.gridGap}`}>
+                {requiresEmail && form.settings.emailPosition !== 'bottom' && previewEmail}
+                {form.fields.filter(f => !isHeaderMedia(f)).map((f, i) => (f.type === 'banner' || f.type === 'image') ? (
+                  <div key={f.id} className="col-span-6"><FormMediaBlock field={f} cardClass={theme.card} /></div>
+                ) : (
+                  <div key={f.id} className={`${fieldSpan(f.width)} ${theme.cardPad} ${theme.card} !shadow-none`}>
                     <label className="block text-sm font-semibold text-slate-800 mb-1">
                       {f.title} {f.required && <span className="text-rose-500">*</span>}
                     </label>
@@ -1355,14 +1790,16 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                     />
                   </div>
                 ))}
+                {requiresEmail && form.settings.emailPosition === 'bottom' && previewEmail}
               </div>
 
               <div className="mt-8 pt-6 border-t border-slate-200 flex justify-end">
                 <button
                   disabled
-                  className="px-5 py-2 bg-blue-700 text-white rounded-lg text-xs font-semibold opacity-80 cursor-not-allowed"
+                  style={submitButton.style}
+                  className="px-5 py-2 rounded-lg text-xs font-semibold opacity-80 cursor-not-allowed"
                 >
-                  Enviar respuestas
+                  {submitButton.text}
                 </button>
               </div>
             </div>

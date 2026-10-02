@@ -21,7 +21,9 @@ import {
   MessageSquare 
 } from 'lucide-react';
 import { Form, FormResponse } from '../types';
-import { formatDateSpanish, formatTimeSeconds, exportResponsesToCSV, exportResponsesToExcel, formatAnswerForExport } from '../utils/helpers';
+import { exportResponsesPDF, exportIndividualResponsePDF } from '../utils/pdf';
+import { Pagination, usePagination } from '../components/Pagination';
+import { isQuestionField, formatDateSpanish, formatTimeSeconds, exportResponsesToCSV, exportResponsesToExcel, formatAnswerForExport } from '../utils/helpers';
 
 interface ResponsesViewProps {
   forms: Form[];
@@ -29,6 +31,7 @@ interface ResponsesViewProps {
   onSelectForm: (formId: string) => void;
   responses: FormResponse[];
   onToggleAcceptingResponses: (formId: string, currentStatus: string) => void;
+  institutionName: string;
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -38,6 +41,7 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
   onSelectForm,
   responses,
   onToggleAcceptingResponses,
+  institutionName,
   showToast
 }) => {
   const [activeTab, setActiveTab] = useState<'summary' | 'table' | 'individual'>('summary');
@@ -81,6 +85,7 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
       });
   }, [formResponses, searchTableQuery, sortField, sortDirection]);
 
+  const pg = usePagination(filteredResponses, `${currentForm?.id}|${searchTableQuery}|${sortField}|${sortDirection}`);
   const currentIndividual = formResponses[individualIndex] || null;
 
   // Compute analytics for questions
@@ -88,7 +93,7 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
     if (!currentForm) return [];
 
     return currentForm.fields
-      .filter(f => f.type !== 'section')
+      .filter(isQuestionField)
       .map(field => {
         // Collect all answers
         const rawAnswers = formResponses.map(r => r.answers[field.id]).filter(v => v !== undefined && v !== null && v !== '');
@@ -246,7 +251,7 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
             </button>
 
             <button
-              onClick={() => window.print()}
+              onClick={() => { exportResponsesPDF(currentForm, filteredResponses, institutionName); showToast('PDF generado con éxito', 'success'); }}
               className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border border-blue-200"
             >
               <Printer className="w-3.5 h-3.5 text-blue-600" />
@@ -490,14 +495,14 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
                   <th className="py-3 px-4">Fecha y Hora</th>
                   <th className="py-3 px-4">Tiempo</th>
                   <th className="py-3 px-4">Remitente</th>
-                  {currentForm.fields.filter(f => f.type !== 'section').slice(0, 3).map(f => (
+                  {currentForm.fields.filter(isQuestionField).slice(0, 3).map(f => (
                     <th key={f.id} className="py-3 px-4 truncate max-w-[200px]">{f.title}</th>
                   ))}
                   <th className="py-3 px-4 text-right">Detalle</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {filteredResponses.map((r, index) => (
+                {pg.pageItems.map((r) => (
                   <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-3 px-4 font-mono font-semibold text-slate-900 whitespace-nowrap">
                       {r.folio}
@@ -512,7 +517,7 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
                       <div className="font-medium text-slate-800">{r.respondentName || 'Anónimo'}</div>
                       <div className="text-[11px] text-slate-400 truncate">{r.respondentEmail}</div>
                     </td>
-                    {currentForm.fields.filter(f => f.type !== 'section').slice(0, 3).map(f => {
+                    {currentForm.fields.filter(isQuestionField).slice(0, 3).map(f => {
                       const val = r.answers[f.id];
                       const isFile = val && typeof val === 'object' && 'dataUrl' in val;
                       return (
@@ -538,6 +543,13 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
               </tbody>
             </table>
           </div>
+          <Pagination
+            page={pg.page}
+            pageSize={pg.pageSize}
+            total={pg.total}
+            onPageChange={pg.setPage}
+            onPageSizeChange={pg.setPageSize}
+          />
         </div>
       ) : (
         /* INDIVIDUAL INSPECTOR VIEW */
@@ -565,11 +577,12 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
             </div>
 
             <button
-              onClick={() => window.print()}
-              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5"
+              onClick={() => currentIndividual && exportIndividualResponsePDF(currentForm, currentIndividual, institutionName)}
+              disabled={!currentIndividual}
+              className="px-3 py-1.5 disabled:opacity-40 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>Imprimir Ficha Individual</span>
+              <span>Descargar ficha PDF</span>
             </button>
           </div>
 
@@ -595,7 +608,7 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
 
               {/* Answers Breakdown */}
               <div className="space-y-5">
-                {currentForm.fields.filter(f => f.type !== 'section').map(field => {
+                {currentForm.fields.filter(isQuestionField).map(field => {
                   const answer = currentIndividual.answers[field.id];
 
                   return (
