@@ -79,20 +79,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       `}>
         {/* Brand Area */}
         <div className="h-28 px-4 flex items-center justify-center border-b border-white/10 shrink-0">
-          {!brandingLoaded ? (
-            <div className="w-4/5 h-16 rounded-md bg-white/10 animate-pulse" />
-          ) : branding?.logoDataUrl ? (
+          {brandingLoaded && branding?.logoDataUrl ? (
             <img src={branding.logoDataUrl} alt={branding.name} className="max-h-24 w-4/5 object-contain" />
           ) : (
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-                <ShieldCheck className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="text-base font-bold text-white tracking-tight leading-none">Formularios</div>
-                <div className="text-[10px] text-slate-400 font-medium tracking-wider uppercase mt-1">Gestión Digital</div>
-              </div>
-            </div>
+            // Loading, or no logo uploaded yet: a skeleton holds the place of the logo
+            <div className="w-4/5 h-16 rounded-md bg-white/10 animate-pulse" aria-label="Logo institucional" />
           )}
         </div>
 

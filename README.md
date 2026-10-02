@@ -39,6 +39,22 @@ Aplicación para crear formularios, recibir respuestas y consultar reportes. La 
 
 **Para detener todo:** cierre las dos terminales (`Ctrl+C`) y luego `docker compose stop`. Para apagar el contenedor y además borrar los datos guardados, use `docker compose down -v` (irreversible).
 
+## Cabeceras de seguridad (despliegue)
+
+- **API:** ya envía sus propias cabeceras (`X-Frame-Options: DENY`, CSP `default-src 'none'; frame-ancestors 'none'`, `nosniff`, etc.).
+- **Frontend en producción:** `npm run build` inyecta una Content-Security-Policy en el `index.html`, pero **`frame-ancestors` solo funciona como cabecera HTTP**, no dentro de un `<meta>`. Configúrela en el servidor que sirva la carpeta `dist/`:
+  - **Netlify / Cloudflare Pages:** ya está en `public/_headers` (se copia a `dist/`).
+  - **nginx:**
+    ```nginx
+    add_header Content-Security-Policy "frame-ancestors 'self'" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    ```
+  - **Servidor de desarrollo (`npm run dev`) y `npm run preview`:** las envía `vite.config.ts`.
+- Para **incrustar** los formularios públicos en otro sitio, cambie `'self'` por `'self' https://su-sitio.gob.gt` en la cabecera.
+- Sesión: cookie HttpOnly. Si el frontend y la API están en dominios distintos, use `COOKIE_SAMESITE="None"` (exige HTTPS); vea `.env.example`.
+
 ## API inicial
 
 - `POST /api/auth/login`: inicio de sesión y token JWT.

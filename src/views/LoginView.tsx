@@ -203,16 +203,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoggedIn }) => {
         {step === 'credentials' && (
           <>
             <div className="flex flex-col items-center pt-8 px-6">
-              {!brandingLoaded ? (
-                <div className="w-20 h-16 rounded-lg bg-slate-100 animate-pulse" />
-              ) : (branding?.loginLogoDataUrl || branding?.logoDataUrl) ? (
+              {brandingLoaded && (branding?.loginLogoDataUrl || branding?.logoDataUrl) ? (
                 <img src={branding.loginLogoDataUrl || branding.logoDataUrl!} alt={branding.name} className="max-h-16 max-w-[260px] object-contain" />
               ) : (
                 <>
-                  <div className="w-12 h-12 rounded-lg bg-blue-700 flex items-center justify-center mb-3">
-                    <Landmark className="w-6 h-6 text-white" />
-                  </div>
-                  <h1 className="text-lg font-semibold text-slate-900">{branding?.name || 'Formularios Institucionales'}</h1>
+                  {/* Loading, or no logo uploaded yet: a skeleton holds the place of the logo */}
+                  <div className="w-48 h-16 rounded-lg bg-slate-100 animate-pulse" aria-label="Logo institucional" />
+                  {brandingLoaded && (
+                    <h1 className="mt-3 text-lg font-semibold text-slate-900">{branding?.name || 'Formularios Institucionales'}</h1>
+                  )}
                 </>
               )}
             </div>

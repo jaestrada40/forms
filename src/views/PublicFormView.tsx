@@ -1,7 +1,9 @@
 import { isFieldVisible, isHeaderMedia, isQuestionField } from '../utils/helpers';
-import { fieldSpan, getFormTheme, getSubmitButton } from '../utils/formTheme';
+import { fieldSpan, getFormTheme, getSubmitButton, titleCss, useFormFonts } from '../utils/formTheme';
 import { FormBannerBar, FormMediaBlock, HeaderBanners, HeaderLogos } from '../components/FormBranding';
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import { api } from '../services/api';
+import { CaptchaWidget } from '../components/CaptchaWidget';
 import { 
   ShieldCheck, 
   ArrowLeft, 
@@ -15,21 +17,31 @@ import {
   Upload, 
   Lock 
 } from 'lucide-react';
-import { Form, FormField, FormResponse } from '../types';
+import { Form, FormCaptcha, FormField, FormResponse } from '../types';
 import { formatDateSpanish } from '../utils/helpers';
 import { GUATEMALA_DEPARTMENTS, GUATEMALA_DEPARTMENT_NAMES } from '../data/guatemalaLocations';
+
+/** Anti-spam fields that travel with the response but are not part of it. */
+export interface SubmitExtra {
+  captchaToken?: string;
+  captchaAnswer?: string;
+  website?: string;
+}
 
 interface PublicFormViewProps {
   form: Form;
   /** Persists the response and resolves with the folio assigned by the server. Rejects with a user-facing message on failure. */
-  onSubmitResponse: (newResponse: FormResponse) => Promise<{ folio: string; submittedAt: string }>;
+  onSubmitResponse: (newResponse: FormResponse, extra?: SubmitExtra) => Promise<{ folio: string; submittedAt: string }>;
   onExitToAdmin?: () => void;
+  /** Overrides form.captcha (the admin preview computes it from the global captcha settings). */
+  captcha?: FormCaptcha | null;
 }
 
 export const PublicFormView: React.FC<PublicFormViewProps> = ({
   form,
   onSubmitResponse,
-  onExitToAdmin
+  onExitToAdmin,
+  captcha: captchaOverride
 }) => {
   // Answers state: fieldId -> value
   const [answers, setAnswers] = useState<Record<string, any>>({});
@@ -41,6 +53,20 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [contactEmail, setContactEmail] = useState('');
+  const [honeypot, setHoneypot] = useState('');
+  const [challenge, setChallenge] = useState<{ question: string; token: string } | null>(null);
+  const [challengeAnswer, setChallengeAnswer] = useState('');
+  const captchaInfo = captchaOverride !== undefined ? captchaOverride : form.captcha;
+  const captchaEnabled = captchaInfo?.provider === 'builtin';
+  const externalCaptcha = captchaInfo && captchaInfo.provider !== 'builtin' ? captchaInfo : null;
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
+
+  const loadChallenge = () => {
+    setChallengeAnswer('');
+    api.getPublicChallenge(form.id).then(setChallenge).catch(() => setChallenge(null));
+  };
+  useEffect(() => { if (captchaEnabled) loadChallenge(); }, [captchaEnabled, form.id]);
   const requiresEmail = !!(form.settings.collectEmails || form.settings.limitOneResponsePerUser);
 
   // Group fields into sections
@@ -185,6 +211,11 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
       }
     }
 
+    if (externalCaptcha && !captchaToken) {
+      setSubmitError('Complete la verificación anti-spam antes de enviar.');
+      return;
+    }
+
     const timeSpent = Math.max(1, Math.round((Date.now() - startTime) / 1000));
 
     // Try finding email/name in answers
@@ -216,11 +247,17 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const saved = await onSubmitResponse(newResponse);
+      const saved = await onSubmitResponse(newResponse, {
+        website: honeypot || undefined,
+        ...(captchaEnabled && challenge ? { captchaToken: challenge.token, captchaAnswer: challengeAnswer } : {}),
+        ...(externalCaptcha && captchaToken ? { captchaToken } : {}),
+      });
       setSubmittedFolio(saved.folio);
       setSubmittedAt(saved.submittedAt);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'No fue posible enviar su respuesta. Intente nuevamente.');
+      if (captchaEnabled) loadChallenge(); // each challenge can be answered only once
+      if (externalCaptcha) setCaptchaReset(n => n + 1); // provider tokens are single-use too
     } finally {
       setSubmitting(false);
     }
@@ -298,6 +335,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
 
   const theme = getFormTheme(form.design);
   const submitButton = getSubmitButton(form.design);
+  useFormFonts(form.design, form.fields);
 
   const emailSection = form.settings.emailPosition === 'bottom' ? totalSections - 1 : 0;
   const showEmailAtTop = requiresEmail && emailSection === 0 && currentSectionIndex === 0 && form.settings.emailPosition !== 'bottom';
@@ -412,7 +450,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                 }`}
               >
                 <div className="mb-3">
-                  <label className="block text-sm font-semibold text-slate-900 mb-1 leading-snug">
+                  <label className="block text-sm font-semibold text-slate-900 mb-1 leading-snug" style={titleCss(form.design.titleStyle, field.titleStyle)}>
                     {field.title} {field.required && <span className="text-rose-500 font-bold">*</span>}
                   </label>
                   {field.description && (
@@ -753,6 +791,48 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
 
           {/* Navigation Controls */}
           {showEmailAtBottom && emailBlock}
+
+          {/* Hidden trap for simple bots: real people never see or fill it */}
+          <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden' }}>
+            <label>Sitio web<input type="text" tabIndex={-1} autoComplete="off" value={honeypot} onChange={(e) => setHoneypot(e.target.value)} /></label>
+          </div>
+
+          {externalCaptcha && currentSectionIndex === totalSections - 1 && (
+            <div className={`col-span-6 bg-white ${theme.card} ${theme.cardPad}`}>
+              <label className="block text-sm font-semibold text-slate-900 mb-2">
+                Verificación <span className="text-rose-500 font-bold">*</span>
+              </label>
+              <CaptchaWidget
+                provider={externalCaptcha.provider as 'turnstile' | 'hcaptcha' | 'recaptcha'}
+                siteKey={externalCaptcha.siteKey ?? ''}
+                onToken={setCaptchaToken}
+                resetKey={captchaReset}
+              />
+            </div>
+          )}
+
+          {captchaEnabled && currentSectionIndex === totalSections - 1 && (
+            <div className={`col-span-6 bg-white ${theme.card} ${theme.cardPad}`}>
+              <label className="block text-sm font-semibold text-slate-900 mb-1">
+                Verificación <span className="text-rose-500 font-bold">*</span>
+              </label>
+              <p className="text-xs text-slate-500 mb-2">Responda para confirmar que es una persona.</p>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-slate-800 whitespace-nowrap">{challenge?.question ?? 'Cargando…'}</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  required
+                  maxLength={4}
+                  value={challengeAnswer}
+                  onChange={(e) => setChallengeAnswer(e.target.value.replace(/[^0-9-]/g, ''))}
+                  className={`w-24 px-3 py-2 text-xs bg-slate-50 border border-slate-200 ${theme.input} focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600`}
+                  aria-label="Respuesta de verificación"
+                />
+                <button type="button" onClick={loadChallenge} className="text-[11px] font-semibold text-blue-700 hover:underline">Otra pregunta</button>
+              </div>
+            </div>
+          )}
           </div>
 
           <div className="flex items-center justify-between pt-4">

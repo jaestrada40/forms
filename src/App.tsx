@@ -26,7 +26,8 @@ import { PublicResponderPage } from './views/PublicResponderPage';
 import { DashboardHome } from './views/DashboardHome';
 import { FormsList } from './views/FormsList';
 import { FormBuilder } from './views/FormBuilder';
-import { PublicFormView } from './views/PublicFormView';
+import { PublicFormView, SubmitExtra } from './views/PublicFormView';
+import { CaptchaStatus, effectiveCaptcha } from './utils/helpers';
 import { ResponsesView } from './views/ResponsesView';
 import { ReportsView } from './views/ReportsView';
 import { TemplatesView } from './views/TemplatesView';
@@ -53,6 +54,7 @@ function AuthenticatedApp() {
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
+  const [captchaStatus, setCaptchaStatus] = useState<CaptchaStatus | null>(null);
   const [loadingForms, setLoadingForms] = useState(false);
   const [branding, setBranding] = useState<BrandingInfo | null>(null);
   const [brandingLoaded, setBrandingLoaded] = useState(false);
@@ -152,6 +154,7 @@ function AuthenticatedApp() {
       loadForms();
       loadUsers();
       api.getDepartments().then(setDepartments).catch(() => {});
+      api.getCaptchaStatus().then(setCaptchaStatus).catch(() => {});
     }
   }, [authUser, loadForms, loadUsers]);
 
@@ -341,13 +344,14 @@ function AuthenticatedApp() {
   };
 
   // Submit public response
-  const handleSubmitResponse = async (newResponse: FormResponse): Promise<{ folio: string; submittedAt: string }> => {
+  const handleSubmitResponse = async (newResponse: FormResponse, extra?: SubmitExtra): Promise<{ folio: string; submittedAt: string }> => {
     const created = await api.submitResponse(newResponse.formId, {
       answers: newResponse.answers,
       respondentEmail: newResponse.respondentEmail || undefined,
       respondentName: newResponse.respondentName || undefined,
       respondentDepartment: newResponse.respondentDepartment || undefined,
       completionTimeSeconds: newResponse.completionTimeSeconds,
+      ...extra,
     });
     const saved: FormResponse = { ...newResponse, id: created.id, folio: created.folio, submittedAt: created.submitted_at };
     setResponses(prev => [saved, ...prev]);
@@ -407,6 +411,7 @@ function AuthenticatedApp() {
   };
 
   const handleLogout = () => {
+    api.logout(); // clears the HttpOnly session cookie
     session.clear();
     try { sessionStorage.removeItem(NAV_STORAGE_KEY); } catch { /* sessionStorage unavailable */ }
     setAuthUser(null);
@@ -427,6 +432,7 @@ function AuthenticatedApp() {
         <PublicFormView
           form={activeForm}
           onSubmitResponse={handleSubmitResponse}
+          captcha={effectiveCaptcha(activeForm.settings, captchaStatus)}
           onExitToAdmin={() => setCurrentScreen(previousScreen)}
         />
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />

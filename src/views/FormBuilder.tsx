@@ -46,8 +46,9 @@ import {
 import { api } from '../services/api';
 import { Form, FormField, FormFieldType, FormDesign, FormSettings } from '../types';
 import { ColorPicker } from '../components/ColorPicker';
-import { isHeaderMedia, isQuestionField } from '../utils/helpers';
-import { FIELD_WIDTHS, fieldSpan, getFormTheme, getSubmitButton, DEFAULT_SUBMIT_TEXT, readImageAsDataUrl } from '../utils/formTheme';
+import { TitleStyleEditor } from '../components/TitleStyleEditor';
+import { CAPTCHA_LABELS, CaptchaStatus, effectiveCaptcha, isHeaderMedia, isQuestionField } from '../utils/helpers';
+import { FIELD_WIDTHS, FONT_OPTIONS, ensureFont, fieldSpan, getFormTheme, getSubmitButton, titleCss, useFormFonts, DEFAULT_SUBMIT_TEXT, readImageAsDataUrl } from '../utils/formTheme';
 import { FormBannerBar, FormMediaBlock, HeaderBanners, HeaderLogos, DEFAULT_IMAGE_WIDTH, DEFAULT_BANNER_HEIGHT } from '../components/FormBranding';
 import { PRESET_FIELDS } from '../data/presetFields';
 import { GUATEMALA_DEPARTMENT_NAMES } from '../data/guatemalaLocations';
@@ -125,11 +126,16 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
   showToast
 }) => {
   const theme = getFormTheme(form.design);
+  useFormFonts(form.design, form.fields);
   const [mailMode, setMailMode] = useState<'smtp' | 'console' | 'off' | null>(null);
+  const [captchaStatus, setCaptchaStatus] = useState<CaptchaStatus | null>(null);
+  const activeCaptcha = effectiveCaptcha(form.settings, captchaStatus);
   const [notifyEmailsText, setNotifyEmailsText] = useState((form.settings.notificationEmails || []).join(', '));
   const submitButton = getSubmitButton(form.design);
   const requiresEmail = !!(form.settings.collectEmails || form.settings.limitOneResponsePerUser);
   const [activeTab, setActiveTab] = useState<'questions' | 'design' | 'settings' | 'preview'>('questions');
+  // The design tab previews every font, so load them all while it is open
+  useEffect(() => { if (activeTab === 'design') FONT_OPTIONS.forEach(f => ensureFont(f.id)); }, [activeTab]);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(
     form.fields.length > 0 ? form.fields[0].id : null
   );
@@ -138,6 +144,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
 
   useEffect(() => {
     api.getEmailStatus().then(r => setMailMode(r.mode)).catch(() => {});
+    api.getCaptchaStatus().then(setCaptchaStatus).catch(() => {});
   }, []);
 
   const selectedField = form.fields.find(f => f.id === selectedFieldId) || null;
@@ -625,6 +632,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                             type="text"
                             value={field.title}
                             onChange={(e) => handleUpdateSelectedField({ title: e.target.value })}
+                            style={isQuestionField(field) ? titleCss(form.design.titleStyle, field.titleStyle) : undefined}
                             className="w-full font-semibold text-sm text-slate-900 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-600 focus:outline-hidden pb-0.5"
                             placeholder={isQuestionField(field) ? 'Escriba la pregunta...' : 'Descripción de la imagen (texto alternativo)'}
                           />
@@ -1075,6 +1083,24 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                 </div>
                 )}
 
+                {/* Title style */}
+                {isQuestionField(selectedField) && (
+                  <details className="group border border-slate-200 rounded-lg bg-white">
+                    <summary className="cursor-pointer select-none px-3 py-2 text-[10px] font-semibold text-slate-700 uppercase tracking-wider flex items-center justify-between">
+                      Estilo del título
+                      {selectedField.titleStyle && <span className="text-[10px] font-semibold text-blue-700 normal-case">Personalizado</span>}
+                    </summary>
+                    <div className="px-3 pb-3">
+                      <TitleStyleEditor
+                        value={selectedField.titleStyle}
+                        onChange={(titleStyle) => handleUpdateSelectedField({ titleStyle })}
+                        inheritedStyle={form.design.titleStyle}
+                        sample={selectedField.title || 'Título de ejemplo'}
+                      />
+                    </div>
+                  </details>
+                )}
+
                 {/* Width / columns */}
                 {isQuestionField(selectedField) && (
                   <div>
@@ -1500,27 +1526,43 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
             {/* Typography */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                Tipografía de Lectura
+                Fuente del formulario
               </label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['sans', 'serif', 'mono'] as const).map((font) => (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {FONT_OPTIONS.map((font) => (
                   <button
-                    key={font}
+                    key={font.id}
+                    type="button"
                     onClick={() => updateFormState({
                       ...form,
-                      design: { ...form.design, fontFamily: font }
+                      design: { ...form.design, fontFamily: font.id }
                     })}
-                    style={getFormTheme({ fontFamily: font }).fontStyle}
-                    className={`p-3 rounded-lg border text-xs font-medium capitalize text-center ${
-                      form.design.fontFamily === font
-                        ? 'border-blue-600 bg-blue-50/50 text-blue-700 font-semibold'
+                    style={{ fontFamily: font.stack }}
+                    className={`px-2.5 py-2 rounded-lg border text-left ${
+                      form.design.fontFamily === font.id
+                        ? 'border-blue-600 bg-blue-50/50 text-blue-700'
                         : 'border-slate-200 text-slate-700 hover:bg-slate-50'
                     }`}
                   >
-                    {font === 'sans' ? 'Plus Jakarta (Sans)' : font === 'serif' ? 'Editorial Serif' : 'Datos (Mono)'}
+                    <span className="block text-base leading-tight">Aa</span>
+                    <span className="block text-[11px] truncate">{font.label}</span>
                   </button>
                 ))}
               </div>
+              <p className="text-[11px] text-slate-500 mt-2">Se aplica a todo el formulario. Las fuentes distintas a Plus Jakarta Sans se descargan de Google Fonts al abrir el formulario.</p>
+            </div>
+
+            {/* Question title style (form-wide default) */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+                Estilo de los títulos de las preguntas
+              </label>
+              <p className="text-[11px] text-slate-500 mb-3">Se aplica a todas las preguntas. Cada pregunta puede sobrescribirlo en su panel «Estilo del título».</p>
+              <TitleStyleEditor
+                value={form.design.titleStyle}
+                onChange={(titleStyle) => updateFormState({ ...form, design: { ...form.design, titleStyle } })}
+                inheritFontLabel="La fuente del formulario"
+              />
             </div>
 
             {/* Theme Style */}
@@ -1607,6 +1649,15 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   desc: 'El formulario pedirá el correo de quien responde y lo guardará con la respuesta',
                   checked: !!form.settings.collectEmails || !!form.settings.limitOneResponsePerUser,
                   disabled: !!form.settings.limitOneResponsePerUser,
+                },
+                {
+                  key: 'captchaEnabled' as const,
+                  title: 'Verificación anti-spam (captcha)',
+                  desc: captchaStatus && captchaStatus.provider !== 'none'
+                    ? `Se muestra ${CAPTCHA_LABELS[captchaStatus.provider]} antes de enviar. Apáguelo solo si este formulario no es público`
+                    : 'Pide resolver una pregunta sencilla antes de enviar. Un Administrador puede configurar Turnstile, hCaptcha o reCAPTCHA en Configuración',
+                  checked: activeCaptcha !== null,
+                  disabled: false,
                 },
                 {
                   key: 'limitOneResponsePerUser' as const,
@@ -1777,7 +1828,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   <div key={f.id} className="col-span-6"><FormMediaBlock field={f} cardClass={theme.card} /></div>
                 ) : (
                   <div key={f.id} className={`${fieldSpan(f.width)} ${theme.cardPad} ${theme.card} !shadow-none`}>
-                    <label className="block text-sm font-semibold text-slate-800 mb-1">
+                    <label className="block text-sm font-semibold text-slate-800 mb-1" style={titleCss(form.design.titleStyle, f.titleStyle)}>
                       {f.title} {f.required && <span className="text-rose-500">*</span>}
                     </label>
                     {f.description && <p className="text-xs text-slate-500 mb-2">{f.description}</p>}
@@ -1791,6 +1842,21 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                   </div>
                 ))}
                 {requiresEmail && form.settings.emailPosition === 'bottom' && previewEmail}
+                {activeCaptcha && (
+                  <div className={`col-span-6 ${theme.cardPad} ${theme.card} !shadow-none`}>
+                    <label className="block text-sm font-semibold text-slate-800 mb-1">Verificación <span className="text-rose-500">*</span></label>
+                    {activeCaptcha.provider === 'builtin' ? (
+                      <div className="flex items-center gap-3 text-xs text-slate-600">
+                        <span className="font-semibold">¿Cuánto es 7 + 4?</span>
+                        <input type="text" disabled className="w-24 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg cursor-not-allowed" />
+                      </div>
+                    ) : (
+                      <div className="inline-flex items-center gap-2 px-3 py-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg">
+                        <span className="w-4 h-4 border-2 border-slate-300 rounded-sm" /> Verificación de {CAPTCHA_LABELS[activeCaptcha.provider]}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="mt-8 pt-6 border-t border-slate-200 flex justify-end">

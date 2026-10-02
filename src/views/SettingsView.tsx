@@ -14,7 +14,7 @@ import {
   Trash2,
   Upload
 } from 'lucide-react';
-import { api, InstitutionSettings, SmtpSettings } from '../services/api';
+import { api, CaptchaSettings, InstitutionSettings, SmtpSettings } from '../services/api';
 
 interface SettingsViewProps {
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
@@ -42,6 +42,43 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ showToast, isSuperAd
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loginFileInputRef = useRef<HTMLInputElement>(null);
+
+  const [captcha, setCaptcha] = useState<CaptchaSettings | null>(null);
+  const [captchaSecret, setCaptchaSecret] = useState('');
+  const [captchaBusy, setCaptchaBusy] = useState<'save' | 'verify' | null>(null);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    api.getCaptchaSettings().then(setCaptcha).catch(() => showToast('No fue posible cargar la configuración del captcha.', 'error'));
+  }, [isSuperAdmin]);
+
+  const handleSaveCaptcha = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!captcha) return;
+    setCaptchaBusy('save');
+    try {
+      await api.saveCaptchaSettings({ provider: captcha.provider, siteKey: captcha.siteKey, secretKey: captchaSecret || undefined });
+      setCaptchaSecret('');
+      setCaptcha(await api.getCaptchaSettings());
+      showToast(captcha.provider === 'none' ? 'Captcha desactivado: los formularios se muestran sin verificación' : 'Captcha guardado: aparecerá en todos los formularios públicos', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'No fue posible guardar el captcha.', 'error');
+    } finally {
+      setCaptchaBusy(null);
+    }
+  };
+
+  const handleVerifyCaptcha = async () => {
+    setCaptchaBusy('verify');
+    try {
+      await api.verifyCaptchaSettings();
+      showToast('La clave secreta es válida para el proveedor.', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'No fue posible verificar las credenciales.', 'error');
+    } finally {
+      setCaptchaBusy(null);
+    }
+  };
 
   const [smtp, setSmtp] = useState<SmtpSettings | null>(null);
   const [smtpPassword, setSmtpPassword] = useState('');
@@ -249,6 +286,74 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ showToast, isSuperAd
             ))}
           </ul>
         </div>
+      )}
+
+      {isSuperAdmin && captcha && (
+        <form onSubmit={handleSaveCaptcha} className="bg-white rounded-xl border border-slate-200/80 p-5 shadow-xs space-y-4">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+            <ShieldCheck className="w-4 h-4 text-blue-700" />
+            <h3 className="font-bold text-sm text-slate-900">Captcha anti-spam</h3>
+            <span className={`ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-md ${
+              captcha.provider === 'none' || !captcha.hasSecret ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
+            }`}>
+              {captcha.provider === 'none' ? 'Sin configurar' : captcha.hasSecret ? 'Activo en todos los formularios' : 'Falta la clave secreta'}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-500">
+            Si lo configura, el captcha aparece al final de <strong>cada formulario público</strong> (cada formulario puede excluirse en su pestaña Configuración).
+            Mientras no lo configure, los formularios se ven y se responden con normalidad, sin verificación.
+          </p>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Proveedor</label>
+            <select
+              value={captcha.provider}
+              onChange={(e) => setCaptcha({ ...captcha, provider: e.target.value as CaptchaSettings['provider'] })}
+              className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+            >
+              <option value="none">Ninguno (sin captcha)</option>
+              <option value="turnstile">Cloudflare Turnstile</option>
+              <option value="hcaptcha">hCaptcha</option>
+              <option value="recaptcha">Google reCAPTCHA v2 (casilla «No soy un robot»)</option>
+            </select>
+          </div>
+
+          {captcha.provider !== 'none' && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Clave del sitio (pública)</label>
+                  <input type="text" autoComplete="off" value={captcha.siteKey} onChange={(e) => setCaptcha({ ...captcha, siteKey: e.target.value })}
+                    className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Clave secreta</label>
+                  <input type="password" autoComplete="new-password" value={captchaSecret}
+                    placeholder={captcha.hasSecret ? '•••••••• (guardada; escriba para cambiarla)' : ''}
+                    onChange={(e) => setCaptchaSecret(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                {captcha.provider === 'turnstile' && 'Cree un widget en dash.cloudflare.com → Turnstile y agregue su dominio. Gratuito.'}
+                {captcha.provider === 'hcaptcha' && 'Cree un sitio en dashboard.hcaptcha.com y copie la clave del sitio y la clave secreta de su cuenta.'}
+                {captcha.provider === 'recaptcha' && 'Cree la clave en la consola de Google Cloud (reCAPTCHA) con el tipo «Casilla» (v2) y agregue su dominio. Las claves antiguas de v2 siguen funcionando.'}
+                {' '}Las claves de prueba del proveedor también sirven. La clave secreta se guarda cifrada y nunca se envía al navegador.
+              </p>
+            </>
+          )}
+
+          <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-100">
+            <button type="button" disabled={captchaBusy !== null || captcha.provider === 'none' || !captcha.hasSecret} onClick={handleVerifyCaptcha}
+              className="px-3 py-2 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 rounded-lg flex items-center gap-1.5">
+              {captchaBusy === 'verify' && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Verificar clave secreta
+            </button>
+            <button type="submit" disabled={captchaBusy !== null}
+              className="px-4 py-2 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white rounded-lg text-xs font-semibold flex items-center gap-2">
+              {captchaBusy === 'save' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Guardar captcha
+            </button>
+          </div>
+        </form>
       )}
 
       {isSuperAdmin && smtp && (
