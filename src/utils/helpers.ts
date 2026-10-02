@@ -41,14 +41,15 @@ export function isQuestionField(field: { type: string }): boolean {
   return field.type !== 'section' && field.type !== 'banner' && field.type !== 'image';
 }
 
-export type CaptchaStatus = { provider: 'none' | 'turnstile' | 'hcaptcha' | 'recaptcha'; siteKey: string };
+export type CaptchaStatus = { provider: 'none' | 'turnstile' | 'hcaptcha' | 'recaptcha' | 'recaptcha3'; siteKey: string };
 
 export const CAPTCHA_LABELS: Record<string, string> = {
   none: 'Ninguno',
   builtin: 'Pregunta sencilla (integrada)',
   turnstile: 'Cloudflare Turnstile',
   hcaptcha: 'hCaptcha',
-  recaptcha: 'Google reCAPTCHA',
+  recaptcha: 'Google reCAPTCHA v2',
+  recaptcha3: 'Google reCAPTCHA v3 (invisible)',
 };
 
 /**

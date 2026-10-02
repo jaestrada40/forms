@@ -9,7 +9,7 @@ import { createMfaPendingToken, createToken, requireAuth, requireMfaPendingToken
 import { audit, db, getSetting, initializeDatabase, setSetting } from './db.js';
 import { encryptSecret, escapeHtml, getStoredSmtp, mailMode, mailSource, saveStoredSmtp, sendMail } from './mailer.js';
 import { readSecret } from './secrets.js';
-import { FailureLimiter, clearAuthCookie, createChallenge, rateLimit, sameOriginOnly, securityHeaders, setAuthCookie, uuidParam, verifyChallenge, verifyExternalCaptcha, CaptchaProvider } from './security.js';
+import { FailureLimiter, clearAuthCookie, createChallenge, rateLimit, sameOriginOnly, securityHeaders, setAuthCookie, uuidParam, verifyChallenge, verifyExternalCaptcha, evaluateRecaptchaV3, CaptchaProvider } from './security.js';
 import { getSchedules, saveSchedules, sendScheduleNow, startBackgroundJobs, ReportSchedule } from './jobs.js';
 
 authenticator.options = { window: 1 };
@@ -662,7 +662,8 @@ app.patch('/api/users/:id', requireAuth, requireRoles('Administrador'), async (r
 });
 
 // ---- Captcha configuration (global provider + per-form override) ----
-interface CaptchaConfig { provider: 'none' | CaptchaProvider; siteKey: string; secretEnc?: string }
+interface CaptchaConfig { provider: 'none' | CaptchaProvider; siteKey: string; secretEnc?: string; minScore?: number }
+const DEFAULT_MIN_SCORE = 0.5;
 const getCaptchaConfig = () => getSetting<CaptchaConfig>('captcha', { provider: 'none', siteKey: '' });
 
 /**
@@ -679,7 +680,7 @@ async function captchaFor(settings: { captchaEnabled?: boolean }): Promise<{ pro
 app.get('/api/settings/captcha', requireAuth, requireRoles('Administrador'), async (_req, res, next) => {
   try {
     const c = await getCaptchaConfig();
-    res.json({ provider: c.provider, siteKey: c.siteKey, hasSecret: !!c.secretEnc });
+    res.json({ provider: c.provider, siteKey: c.siteKey, hasSecret: !!c.secretEnc, minScore: c.minScore ?? DEFAULT_MIN_SCORE });
   } catch (error) { next(error); }
 });
 
@@ -695,7 +696,8 @@ app.get('/api/settings/captcha-status', requireAuth, async (_req, res, next) => 
 app.put('/api/settings/captcha', requireAuth, requireRoles('Administrador'), async (req, res, next) => {
   try {
     const data = z.object({
-      provider: z.enum(['none', 'turnstile', 'hcaptcha', 'recaptcha']),
+      provider: z.enum(['none', 'turnstile', 'hcaptcha', 'recaptcha', 'recaptcha3']),
+      minScore: z.number().min(0.1).max(0.9).optional(), // reCAPTCHA v3 only
       siteKey: z.string().trim().max(300),
       secretKey: z.string().max(500).optional(), // undefined keeps the saved secret, '' removes it
     }).parse(req.body);
@@ -704,7 +706,7 @@ app.put('/api/settings/captcha', requireAuth, requireRoles('Administrador'), asy
     if (data.provider !== 'none' && (!data.siteKey || !secretEnc)) {
       return res.status(400).json({ message: 'Indique la clave del sitio y la clave secreta del proveedor.' });
     }
-    await setSetting('captcha', { provider: data.provider, siteKey: data.siteKey, secretEnc });
+    await setSetting('captcha', { provider: data.provider, siteKey: data.siteKey, secretEnc, minScore: data.minScore ?? previous.minScore ?? DEFAULT_MIN_SCORE });
     await audit(req.user!.id, 'UPDATE', 'settings', 'captcha', { provider: data.provider });
     res.json({ ok: true });
   } catch (error) { next(error); }
@@ -717,10 +719,13 @@ app.post('/api/settings/captcha/verify', requireAuth, requireRoles('Administrado
     if (c.provider === 'none' || !c.secretEnc) return res.status(400).json({ message: 'Guarde primero el proveedor y las claves.' });
     const verdict = await verifyExternalCaptcha(c.provider, readSecret(c.secretEnc), c.siteKey, 'prueba-de-credenciales');
     if (verdict.unreachable) return res.status(502).json({ message: 'No fue posible comunicarse con el proveedor desde el servidor. Revise la conexión a internet.' });
+    // Google validates the token before the secret, so a bad secret looks the same as a fake token: it cannot be
+    // checked without a real submission. We only confirm that the server can reach Google.
+    if (c.provider === 'recaptcha' || c.provider === 'recaptcha3') return res.json({ ok: true, checked: false });
     if (verdict.errors.some(e => ['invalid-input-secret', 'missing-input-secret', 'sitekey-secret-mismatch'].includes(e))) {
       return res.status(400).json({ message: 'La clave secreta no es válida para este proveedor.' });
     }
-    res.json({ ok: true });
+    res.json({ ok: true, checked: true });
   } catch (error) { next(error); }
 });
 
@@ -770,9 +775,10 @@ app.post('/api/public/forms/:id/responses', publicSubmitLimit, async (req, res, 
       }
     } else if (captcha) {
       const config = await getCaptchaConfig();
-      const verdict = payload.captchaToken
+      const raw = payload.captchaToken
         ? await verifyExternalCaptcha(captcha.provider as CaptchaProvider, readSecret(config.secretEnc!), config.siteKey, payload.captchaToken, req.ip)
         : { ok: false, errors: ['missing-input-response'], unreachable: false };
+      const verdict = captcha.provider === 'recaptcha3' ? evaluateRecaptchaV3(raw, config.minScore ?? DEFAULT_MIN_SCORE) : raw;
       if (!verdict.ok) {
         return res.status(verdict.unreachable ? 503 : 400).json({
           message: verdict.unreachable
