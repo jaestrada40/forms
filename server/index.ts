@@ -8,6 +8,8 @@ import { z } from 'zod';
 import { createMfaPendingToken, createToken, requireAuth, requireMfaPendingToken, requireRoles } from './auth.js';
 import { audit, db, getSetting, initializeDatabase, setSetting } from './db.js';
 import { encryptSecret, escapeHtml, getStoredSmtp, mailMode, mailSource, saveStoredSmtp, sendMail } from './mailer.js';
+import { readSecret } from './secrets.js';
+import { FailureLimiter, clearAuthCookie, createChallenge, rateLimit, sameOriginOnly, securityHeaders, setAuthCookie, uuidParam, verifyChallenge, verifyExternalCaptcha, CaptchaProvider } from './security.js';
 import { getSchedules, saveSchedules, sendScheduleNow, startBackgroundJobs, ReportSchedule } from './jobs.js';
 
 authenticator.options = { window: 1 };
@@ -16,8 +18,32 @@ const app = express();
 const port = Number(process.env.API_PORT ?? 4000);
 const allowedOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:3000';
 
-app.use(cors({ origin: allowedOrigin }));
+app.disable('x-powered-by');
+if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? true : (Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY));
+app.use(securityHeaders);
+app.use(cors({ origin: allowedOrigin, credentials: true }));
+app.use(sameOriginOnly(allowedOrigin));
+// Public (unauthenticated) endpoints get a small body limit; the builder needs the larger one for embedded images.
+app.use('/api/public', express.json({ limit: '1mb' }));
 app.use(express.json({ limit: '15mb' }));
+app.param('id', uuidParam);
+
+// Failed logins per client IP. Successful logins do not reset it, or an attacker could clear it with their own account.
+const loginFailuresByIp = new FailureLimiter(15 * 60_000, 30);
+const loginFailuresByAccount = new FailureLimiter(15 * 60_000, 10);
+const loginFailuresByAccountAndIp = new FailureLimiter(15 * 60_000, 5);
+const mfaFailures = new FailureLimiter(5 * 60_000, 5);
+const publicReadLimit = rateLimit({ windowMs: 60_000, max: 120 });
+const publicSubmitLimit = rateLimit({ windowMs: 60_000, max: 20, key: req => `${req.ip}|${req.params.id}` });
+// Compared against when the e-mail does not exist, so response time does not reveal which accounts exist
+const DUMMY_HASH = bcrypt.hashSync(crypto.randomUUID(), 12);
+
+/** Signs a session token and stores it in the HttpOnly cookie. The token is also returned for API clients. */
+function startSession(res: express.Response, user: { id: string; name: string; email: string; role: string }) {
+  const token = createToken({ id: user.id, name: user.name, email: user.email, role: user.role as never });
+  setAuthCookie(res, token);
+  return token;
+}
 
 /** Admins and Creators must use one of the institution's allowed e-mail domains (empty setting = no restriction). */
 async function emailDomainError(email: string, role: string): Promise<string | null> {
@@ -47,17 +73,38 @@ const formUpdateSchema = z.object({
   status: z.enum(['draft', 'published', 'closed']).optional(),
 });
 
+/** At most 30 notification e-mails per form per hour, so a public form cannot be used to flood an inbox. */
+const notificationUsage = new Map<string, { count: number; windowStart: number }>();
+function notificationBudgetLeft(formId: string): boolean {
+  const now = Date.now();
+  const usage = notificationUsage.get(formId);
+  if (!usage || now - usage.windowStart > 3_600_000) { notificationUsage.set(formId, { count: 1, windowStart: now }); return true; }
+  usage.count += 1;
+  return usage.count <= 30;
+}
+
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.post('/api/auth/login', async (req, res, next) => {
   try {
     const { email, password } = loginSchema.parse(req.body);
+    const accountKey = email.toLowerCase();
+    const accountIpKey = `${accountKey}|${req.ip}`;
+    const wait = Math.max(loginFailuresByIp.blockedFor(req.ip ?? 'unknown'), loginFailuresByAccount.blockedFor(accountKey), loginFailuresByAccountAndIp.blockedFor(accountIpKey));
+    if (wait) return loginFailuresByAccount.respond(res, wait);
+
     const result = await db.query('SELECT id, name, email, password_hash, role, department, status, mfa_enabled FROM users WHERE lower(email) = lower($1)', [email]);
     const user = result.rows[0];
-    if (!user || user.status !== 'Activo' || !(await bcrypt.compare(password, user.password_hash))) {
+    const passwordOk = await bcrypt.compare(password, user?.password_hash ?? DUMMY_HASH);
+    if (!user || user.status !== 'Activo' || !passwordOk) {
+      loginFailuresByIp.fail(req.ip ?? 'unknown');
+      loginFailuresByAccount.fail(accountKey);
+      loginFailuresByAccountAndIp.fail(accountIpKey);
       await audit(user?.id, 'LOGIN_FAILED', 'user', user?.id ?? 'desconocido', { email });
       return res.status(401).json({ message: 'Correo o contraseña inválidos.' });
     }
+    loginFailuresByAccount.succeed(accountKey);
+    loginFailuresByAccountAndIp.succeed(accountIpKey);
 
     if (user.mfa_enabled) {
       const mfaToken = createMfaPendingToken(user.id, 'verify');
@@ -70,10 +117,15 @@ app.post('/api/auth/login', async (req, res, next) => {
       return res.json({ mfaSetupRequired: true, mfaToken });
     }
 
-    const token = createToken({ id: user.id, name: user.name, email: user.email, role: user.role });
+    const token = startSession(res, user);
     await audit(user.id, 'LOGIN', 'user', user.id);
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, department: user.department } });
   } catch (error) { next(error); }
+});
+
+app.post('/api/auth/logout', (_req, res) => {
+  clearAuthCookie(res);
+  res.status(204).end();
 });
 
 app.post('/api/auth/mfa/setup', requireMfaPendingToken, async (req, res, next) => {
@@ -84,7 +136,7 @@ app.post('/api/auth/mfa/setup', requireMfaPendingToken, async (req, res, next) =
     const user = userResult.rows[0];
     if (user.mfa_enabled) return res.status(409).json({ message: 'La verificación en dos pasos ya está habilitada.' });
     const secretValue = authenticator.generateSecret();
-    await db.query('UPDATE users SET mfa_secret = $1 WHERE id = $2', [secretValue, user.id]);
+    await db.query('UPDATE users SET mfa_secret = $1 WHERE id = $2', [encryptSecret(secretValue), user.id]);
     const otpauth = authenticator.keyuri(user.email, 'Formularios Institucionales', secretValue);
     const qrDataUrl = await QRCode.toDataURL(otpauth);
     res.json({ secret: secretValue, qrDataUrl });
@@ -99,9 +151,15 @@ app.post('/api/auth/mfa/activate', requireMfaPendingToken, async (req, res, next
     const user = userResult.rows[0];
     if (!user || user.mfa_enabled) return res.status(409).json({ message: 'La verificación en dos pasos ya está habilitada.' });
     if (!user.mfa_secret) return res.status(400).json({ message: 'No hay una configuración de MFA pendiente. Inicie el proceso nuevamente.' });
-    if (!authenticator.check(code, user.mfa_secret)) return res.status(401).json({ message: 'Código inválido.' });
+    const wait = mfaFailures.blockedFor(user.id);
+    if (wait) return mfaFailures.respond(res, wait);
+    if (!authenticator.check(code, readSecret(user.mfa_secret))) {
+      mfaFailures.fail(user.id);
+      return res.status(401).json({ message: 'Código inválido.' });
+    }
+    mfaFailures.succeed(user.id);
     await db.query('UPDATE users SET mfa_enabled = true, mfa_enabled_at = NOW() WHERE id = $1', [user.id]);
-    const token = createToken({ id: user.id, name: user.name, email: user.email, role: user.role });
+    const token = startSession(res, user);
     await audit(user.id, 'MFA_ENABLE', 'user', user.id);
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, department: user.department } });
   } catch (error) { next(error); }
@@ -114,8 +172,14 @@ app.post('/api/auth/mfa/verify', requireMfaPendingToken, async (req, res, next) 
     const userResult = await db.query('SELECT id, name, email, role, department, mfa_secret, mfa_enabled FROM users WHERE id = $1', [req.mfaPending!.id]);
     const user = userResult.rows[0];
     if (!user?.mfa_enabled || !user.mfa_secret) return res.status(400).json({ message: 'La verificación en dos pasos no está habilitada para este usuario.' });
-    if (!authenticator.check(code, user.mfa_secret)) return res.status(401).json({ message: 'Código inválido.' });
-    const token = createToken({ id: user.id, name: user.name, email: user.email, role: user.role });
+    const wait = mfaFailures.blockedFor(user.id);
+    if (wait) return mfaFailures.respond(res, wait);
+    if (!authenticator.check(code, readSecret(user.mfa_secret))) {
+      mfaFailures.fail(user.id);
+      return res.status(401).json({ message: 'Código inválido.' });
+    }
+    mfaFailures.succeed(user.id);
+    const token = startSession(res, user);
     await audit(user.id, 'LOGIN_MFA', 'user', user.id);
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, department: user.department } });
   } catch (error) { next(error); }
@@ -159,13 +223,14 @@ app.patch('/api/auth/me', requireAuth, async (req, res, next) => {
     const newPasswordHash = wantsPasswordChange ? await bcrypt.hash(data.newPassword!, 12) : null;
 
     const updated = await db.query(
-      `UPDATE users SET name = $1, email = $2, password_hash = COALESCE($3, password_hash), updated_at = NOW()
+      `UPDATE users SET name = $1, email = $2, password_hash = COALESCE($3, password_hash), updated_at = NOW(),
+         token_valid_after = CASE WHEN $3::text IS NOT NULL THEN NOW() ELSE token_valid_after END
        WHERE id = $4 RETURNING id, name, email, role, department`,
       [data.name, data.email, newPasswordHash, user.id],
     );
 
     const updatedUser = updated.rows[0];
-    const token = createToken({ id: updatedUser.id, name: updatedUser.name, email: updatedUser.email, role: updatedUser.role });
+    const token = startSession(res, updatedUser);
     await audit(user.id, 'UPDATE', 'user', user.id, { self: true, emailChanged, passwordChanged: wantsPasswordChange });
     res.json({ token, user: updatedUser });
   } catch (error) { next(error); }
@@ -235,18 +300,42 @@ app.patch('/api/settings/institution', requireAuth, requireRoles('Administrador'
   } catch (error) { next(error); }
 });
 
-app.get('/api/forms', requireAuth, async (_req, res, next) => {
+app.get('/api/forms', requireAuth, async (req, res, next) => {
   try {
+    const { id, role } = req.user!;
+    // Respondedores answer forms through public links and manage none; Creadores only see their own forms.
+    if (role === 'Respondedor') return res.json([]);
     const result = await db.query(`SELECT f.*, u.name AS creator_name, u.email AS creator_email,
       COUNT(r.id)::int AS response_count FROM forms f JOIN users u ON u.id = f.created_by
-      LEFT JOIN form_responses r ON r.form_id = f.id GROUP BY f.id, u.id ORDER BY f.updated_at DESC`);
-    res.json(result.rows);
+      LEFT JOIN form_responses r ON r.form_id = f.id
+      WHERE ($1 <> 'Creador' OR f.created_by = $2)
+      GROUP BY f.id, u.id ORDER BY f.updated_at DESC`, [role, id]);
+    // Notification addresses are internal: only the owner and administrators see them
+    res.json(result.rows.map(row => (role === 'Administrador' || row.created_by === id
+      ? row
+      : { ...row, definition: { ...row.definition, settings: { ...row.definition?.settings, notificationEmails: [] } } })));
   } catch (error) { next(error); }
 });
+
+/** Notification recipients: valid addresses only, at most 10, limited to the allowed domains when those are configured. */
+async function notificationEmailsError(definition: { settings?: Record<string, unknown> } | undefined): Promise<string | null> {
+  const emails = definition?.settings?.notificationEmails;
+  if (emails === undefined) return null;
+  if (!Array.isArray(emails) || emails.length > 10) return 'Se permiten hasta 10 correos de notificación.';
+  const institution = await getSetting<{ allowedDomains?: string }>('institution', {});
+  const domains = (institution.allowedDomains ?? '').split(/[,;\s]+/).map(d => d.trim().toLowerCase()).filter(Boolean).map(d => (d.startsWith('@') ? d : `@${d}`));
+  for (const email of emails) {
+    if (typeof email !== 'string' || !z.string().email().safeParse(email).success) return `Correo de notificación inválido: ${String(email).slice(0, 60)}`;
+    if (domains.length && !domains.some(d => email.toLowerCase().endsWith(d))) return `Los correos de notificación deben ser de: ${domains.join(', ')}.`;
+  }
+  return null;
+}
 
 app.post('/api/forms', requireAuth, requireRoles('Administrador', 'Creador'), async (req, res, next) => {
   try {
     const data = formSchema.parse(req.body);
+    const notifyError = await notificationEmailsError(data.definition);
+    if (notifyError) return res.status(400).json({ message: notifyError });
     const result = await db.query(
       `INSERT INTO forms (title, description, department, definition, status, created_by, published_at)
        VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $5 = 'published' THEN NOW() END) RETURNING *`,
@@ -260,6 +349,8 @@ app.post('/api/forms', requireAuth, requireRoles('Administrador', 'Creador'), as
 app.patch('/api/forms/:id', requireAuth, requireRoles('Administrador', 'Creador'), async (req, res, next) => {
   try {
     const data = formUpdateSchema.parse(req.body);
+    const notifyError = await notificationEmailsError(data.definition);
+    if (notifyError) return res.status(400).json({ message: notifyError });
     const result = await db.query(
       `UPDATE forms SET title = COALESCE($1, title), description = COALESCE($2, description),
        department = COALESCE($3, department), definition = COALESCE($4, definition), status = COALESCE($5, status),
@@ -386,6 +477,8 @@ app.post('/api/report-schedules', requireAuth, requireRoles(...REPORT_ROLES), as
       recipients: z.array(z.string().email()).min(1).max(30),
       includeCsv: z.boolean(),
     }).parse(req.body);
+    const recipientsError = await notificationEmailsError({ settings: { notificationEmails: data.recipients } });
+    if (recipientsError) return res.status(400).json({ message: recipientsError.replace('correos de notificación', 'destinatarios').replace('de notificación', '') });
     const now = new Date().toISOString();
     const schedule: ReportSchedule = {
       id: crypto.randomUUID(), ...data, ownerId: req.user!.id, ownerName: req.user!.name, ownerRole: req.user!.role,
@@ -478,7 +571,7 @@ app.get('/api/users', requireAuth, requireRoles('Administrador'), async (_req, r
 app.post('/api/users/:id/mfa-reset', requireAuth, requireRoles('Administrador'), async (req, res, next) => {
   try {
     const result = await db.query(
-      `UPDATE users SET mfa_enabled = false, mfa_secret = NULL, mfa_enabled_at = NULL, updated_at = NOW()
+      `UPDATE users SET mfa_enabled = false, mfa_secret = NULL, mfa_enabled_at = NULL, updated_at = NOW(), token_valid_after = NOW()
        WHERE id = $1 RETURNING id, name, email, role, department, status, mfa_enabled, created_at`,
       [req.params.id],
     );
@@ -552,9 +645,11 @@ app.patch('/api/users/:id', requireAuth, requireRoles('Administrador'), async (r
     const result = await db.query(
       `UPDATE users SET role = COALESCE($1, role), status = COALESCE($2, status),
          password_hash = COALESCE($3, password_hash), name = COALESCE($5, name),
-         email = COALESCE($6, email), department = COALESCE($7, department), updated_at = NOW()
+         email = COALESCE($6, email), department = COALESCE($7, department), updated_at = NOW(),
+         token_valid_after = CASE WHEN $8 THEN NOW() ELSE token_valid_after END
        WHERE id = $4 RETURNING id, name, email, role, department, status, mfa_enabled, created_at`,
-      [data.role, data.status, passwordHash, req.params.id, data.name, data.email, data.department],
+      // Changing role, status or password signs the user out everywhere
+      [data.role, data.status, passwordHash, req.params.id, data.name, data.email, data.department, !!(data.role || data.status || data.password)],
     );
     if (!result.rowCount) return res.status(404).json({ message: 'Usuario no encontrado.' });
     await audit(req.user!.id, 'UPDATE', 'user', req.params.id, {
@@ -566,7 +661,70 @@ app.patch('/api/users/:id', requireAuth, requireRoles('Administrador'), async (r
   } catch (error) { next(error); }
 });
 
-type PublicFormSettings = { notifyEmailOnSubmit?: boolean; notificationEmails?: string[]; closeDate?: string; maxTotalResponses?: number; limitOneResponsePerUser?: boolean; collectEmails?: boolean };
+// ---- Captcha configuration (global provider + per-form override) ----
+interface CaptchaConfig { provider: 'none' | CaptchaProvider; siteKey: string; secretEnc?: string }
+const getCaptchaConfig = () => getSetting<CaptchaConfig>('captcha', { provider: 'none', siteKey: '' });
+
+/**
+ * Captcha that applies to a form: the configured provider for every form, unless the form opts out;
+ * with no provider configured, a form can still turn on the built-in arithmetic question.
+ */
+async function captchaFor(settings: { captchaEnabled?: boolean }): Promise<{ provider: 'builtin' | CaptchaProvider; siteKey?: string } | null> {
+  if (settings.captchaEnabled === false) return null;
+  const config = await getCaptchaConfig();
+  if (config.provider !== 'none' && config.secretEnc && config.siteKey) return { provider: config.provider, siteKey: config.siteKey };
+  return settings.captchaEnabled === true ? { provider: 'builtin' } : null;
+}
+
+app.get('/api/settings/captcha', requireAuth, requireRoles('Administrador'), async (_req, res, next) => {
+  try {
+    const c = await getCaptchaConfig();
+    res.json({ provider: c.provider, siteKey: c.siteKey, hasSecret: !!c.secretEnc });
+  } catch (error) { next(error); }
+});
+
+// Any signed-in user may read which provider is active (the builder shows it); the secret never leaves the server
+app.get('/api/settings/captcha-status', requireAuth, async (_req, res, next) => {
+  try {
+    const c = await getCaptchaConfig();
+    const active = c.provider !== 'none' && !!c.secretEnc && !!c.siteKey;
+    res.json({ provider: active ? c.provider : 'none', siteKey: active ? c.siteKey : '' });
+  } catch (error) { next(error); }
+});
+
+app.put('/api/settings/captcha', requireAuth, requireRoles('Administrador'), async (req, res, next) => {
+  try {
+    const data = z.object({
+      provider: z.enum(['none', 'turnstile', 'hcaptcha', 'recaptcha']),
+      siteKey: z.string().trim().max(300),
+      secretKey: z.string().max(500).optional(), // undefined keeps the saved secret, '' removes it
+    }).parse(req.body);
+    const previous = await getCaptchaConfig();
+    const secretEnc = data.secretKey === undefined ? previous.secretEnc : data.secretKey ? encryptSecret(data.secretKey) : undefined;
+    if (data.provider !== 'none' && (!data.siteKey || !secretEnc)) {
+      return res.status(400).json({ message: 'Indique la clave del sitio y la clave secreta del proveedor.' });
+    }
+    await setSetting('captcha', { provider: data.provider, siteKey: data.siteKey, secretEnc });
+    await audit(req.user!.id, 'UPDATE', 'settings', 'captcha', { provider: data.provider });
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
+// Checks the secret key against the provider: a deliberately invalid token gets a different error when the secret is wrong
+app.post('/api/settings/captcha/verify', requireAuth, requireRoles('Administrador'), async (_req, res, next) => {
+  try {
+    const c = await getCaptchaConfig();
+    if (c.provider === 'none' || !c.secretEnc) return res.status(400).json({ message: 'Guarde primero el proveedor y las claves.' });
+    const verdict = await verifyExternalCaptcha(c.provider, readSecret(c.secretEnc), c.siteKey, 'prueba-de-credenciales');
+    if (verdict.unreachable) return res.status(502).json({ message: 'No fue posible comunicarse con el proveedor desde el servidor. Revise la conexión a internet.' });
+    if (verdict.errors.some(e => ['invalid-input-secret', 'missing-input-secret', 'sitekey-secret-mismatch'].includes(e))) {
+      return res.status(400).json({ message: 'La clave secreta no es válida para este proveedor.' });
+    }
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
+type PublicFormSettings = { captchaEnabled?: boolean; notifyEmailOnSubmit?: boolean; notificationEmails?: string[]; closeDate?: string; maxTotalResponses?: number; limitOneResponsePerUser?: boolean; collectEmails?: boolean };
 
 /** Why a published form is not accepting responses right now, or null when it is open. */
 async function closedReason(formId: string, settings: PublicFormSettings): Promise<string | null> {
@@ -580,7 +738,7 @@ async function closedReason(formId: string, settings: PublicFormSettings): Promi
   return null;
 }
 
-app.get('/api/public/forms/:id', async (req, res, next) => {
+app.get('/api/public/forms/:id', publicReadLimit, async (req, res, next) => {
   try {
     const result = await db.query("SELECT id, title, description, department, definition FROM forms WHERE id = $1 AND status = 'published'", [req.params.id]);
     if (!result.rowCount) return res.status(404).json({ message: 'Formulario no disponible.' });
@@ -589,18 +747,41 @@ app.get('/api/public/forms/:id', async (req, res, next) => {
     // Never expose internal notification addresses on the public endpoint
     const row = result.rows[0];
     row.definition = { ...row.definition, settings: { ...row.definition?.settings, notificationEmails: [] } };
-    res.json(row);
+    res.json({ ...row, captcha: await captchaFor(row.definition?.settings ?? {}) });
   } catch (error) { next(error); }
 });
 
-app.post('/api/public/forms/:id/responses', async (req, res, next) => {
+app.get('/api/public/forms/:id/challenge', publicReadLimit, (_req, res) => res.json(createChallenge()));
+
+app.post('/api/public/forms/:id/responses', publicSubmitLimit, async (req, res, next) => {
   try {
-    const payload = z.object({ answers: z.record(z.string(), z.unknown()), respondentEmail: z.string().email().optional(), respondentName: z.string().max(180).optional(), respondentDepartment: z.string().max(180).optional(), completionTimeSeconds: z.number().int().nonnegative().optional() }).parse(req.body);
+    const payload = z.object({ answers: z.record(z.string(), z.unknown()), respondentEmail: z.string().email().optional(), respondentName: z.string().max(180).optional(), respondentDepartment: z.string().max(180).optional(), completionTimeSeconds: z.number().int().nonnegative().optional(), captchaToken: z.string().max(4000).optional(), captchaAnswer: z.string().max(20).optional(), website: z.string().max(200).optional() }).parse(req.body);
+    // Hidden "website" field: people never fill it in, simple bots do
+    if (payload.website) return res.status(400).json({ message: 'No fue posible enviar su respuesta.' });
     const form = await db.query("SELECT id, title, definition FROM forms WHERE id = $1 AND status = 'published'", [req.params.id]);
     if (!form.rowCount) return res.status(404).json({ message: 'Formulario no disponible.' });
     const settings: PublicFormSettings = form.rows[0].definition?.settings ?? {};
     const reason = await closedReason(req.params.id, settings);
     if (reason) return res.status(410).json({ message: reason });
+    const captcha = await captchaFor(settings);
+    if (captcha?.provider === 'builtin') {
+      if (!verifyChallenge(payload.captchaToken, payload.captchaAnswer)) {
+        return res.status(400).json({ message: 'La verificación es incorrecta o venció. Inténtelo de nuevo.', captcha: true });
+      }
+    } else if (captcha) {
+      const config = await getCaptchaConfig();
+      const verdict = payload.captchaToken
+        ? await verifyExternalCaptcha(captcha.provider as CaptchaProvider, readSecret(config.secretEnc!), config.siteKey, payload.captchaToken, req.ip)
+        : { ok: false, errors: ['missing-input-response'], unreachable: false };
+      if (!verdict.ok) {
+        return res.status(verdict.unreachable ? 503 : 400).json({
+          message: verdict.unreachable
+            ? 'No fue posible validar la verificación anti-spam. Intente nuevamente en unos minutos.'
+            : 'La verificación anti-spam no fue válida o venció. Complétela de nuevo.',
+          captcha: true,
+        });
+      }
+    }
     if ((settings.collectEmails || settings.limitOneResponsePerUser) && !payload.respondentEmail) {
       return res.status(400).json({ message: 'Este formulario requiere un correo electrónico.' });
     }
@@ -608,11 +789,23 @@ app.post('/api/public/forms/:id/responses', async (req, res, next) => {
       const dup = await db.query('SELECT 1 FROM form_responses WHERE form_id = $1 AND lower(respondent_email) = lower($2) LIMIT 1', [req.params.id, payload.respondentEmail]);
       if (dup.rowCount) return res.status(409).json({ message: 'Ya existe una respuesta registrada con este correo electrónico.' });
     }
+    // Keep only answers to this form's real questions, with sane sizes (the endpoint is public)
+    const questionIds = new Set<string>(((form.rows[0].definition?.fields ?? []) as { id?: string; type?: string }[])
+      .filter(f => f.id && !['section', 'banner', 'image'].includes(String(f.type))).map(f => String(f.id)));
+    const submitted = Object.entries(payload.answers);
+    if (submitted.length > 300) return res.status(400).json({ message: 'Demasiadas respuestas en el envío.' });
+    const answers: Record<string, unknown> = {};
+    for (const [key, value] of submitted) {
+      if (!questionIds.has(key)) continue;
+      if (JSON.stringify(value ?? null).length > 20_000) return res.status(400).json({ message: 'Una de las respuestas es demasiado larga.' });
+      answers[key] = value;
+    }
+
     const folio = `FOR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const created = await db.query(`INSERT INTO form_responses (form_id, folio, answers, respondent_email, respondent_name, respondent_department, completion_time_seconds)
-      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, folio, submitted_at`, [req.params.id, folio, payload.answers, payload.respondentEmail, payload.respondentName, payload.respondentDepartment, payload.completionTimeSeconds]);
+      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, folio, submitted_at`, [req.params.id, folio, answers, payload.respondentEmail, payload.respondentName, payload.respondentDepartment, payload.completionTimeSeconds]);
     const notifyTo = settings.notifyEmailOnSubmit ? (settings.notificationEmails ?? []).filter(e => z.string().email().safeParse(e).success) : [];
-    if (notifyTo.length && (await mailMode()) !== 'off') {
+    if (notifyTo.length && notificationBudgetLeft(req.params.id) && (await mailMode()) !== 'off') {
       const title = form.rows[0].title;
       sendMail({
         to: notifyTo,
@@ -627,6 +820,11 @@ app.post('/api/public/forms/:id/responses', async (req, res, next) => {
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (error instanceof z.ZodError) return res.status(400).json({ message: 'Datos inválidos.', details: error.flatten() });
+  // Body-parser failures: payload too large (413) or malformed JSON (400)
+  const status = (error as { status?: number; statusCode?: number })?.status ?? (error as { statusCode?: number })?.statusCode;
+  if (status && status >= 400 && status < 500) {
+    return res.status(status).json({ message: status === 413 ? 'La solicitud es demasiado grande.' : 'Solicitud no válida.' });
+  }
   console.error(error);
   res.status(500).json({ message: 'Ocurrió un error inesperado.' });
 });

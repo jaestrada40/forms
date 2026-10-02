@@ -41,6 +41,26 @@ export function isQuestionField(field: { type: string }): boolean {
   return field.type !== 'section' && field.type !== 'banner' && field.type !== 'image';
 }
 
+export type CaptchaStatus = { provider: 'none' | 'turnstile' | 'hcaptcha' | 'recaptcha'; siteKey: string };
+
+export const CAPTCHA_LABELS: Record<string, string> = {
+  none: 'Ninguno',
+  builtin: 'Pregunta sencilla (integrada)',
+  turnstile: 'Cloudflare Turnstile',
+  hcaptcha: 'hCaptcha',
+  recaptcha: 'Google reCAPTCHA',
+};
+
+/**
+ * Mirrors the server rule: the configured provider applies to every form unless the form opts out (captchaEnabled=false);
+ * with no provider configured, a form can still turn on the built-in question (captchaEnabled=true).
+ */
+export function effectiveCaptcha(settings: { captchaEnabled?: boolean }, status: CaptchaStatus | null) {
+  if (settings.captchaEnabled === false) return null;
+  if (status && status.provider !== 'none') return { provider: status.provider, siteKey: status.siteKey } as const;
+  return settings.captchaEnabled === true ? ({ provider: 'builtin' } as const) : null;
+}
+
 /** Banner / image placed in the form header, above the title. */
 export function isHeaderMedia(field: { type: string; imagePlacement?: string }): boolean {
   return (field.type === 'banner' || field.type === 'image') && field.imagePlacement === 'above_title';
@@ -137,6 +157,13 @@ export function exportTableToCSV(filename: string, headers: string[], rows: (str
   URL.revokeObjectURL(url);
 }
 
+/** HTML-escapes a value for the .xls (HTML) export and defuses spreadsheet formulas (cells starting with = + - @). */
+function xlsCell(value: unknown): string {
+  const text = String(value ?? '');
+  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  return safe.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 export function exportResponsesToExcel(form: Form, responses: FormResponse[]) {
   // Generate valid HTML Excel file that Excel opens cleanly as a native table
   const fields = form.fields.filter(isQuestionField);
@@ -145,7 +172,7 @@ export function exportResponsesToExcel(form: Form, responses: FormResponse[]) {
     <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
     <head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Respuestas</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>
     <body>
-      <h2 style="font-family: Arial; color: #1D4ED8;">${form.title}</h2>
+      <h2 style="font-family: Arial; color: #1D4ED8;">${xlsCell(form.title)}</h2>
       <p style="font-family: Arial; color: #64748B;">Total de Respuestas: ${responses.length} | Exportado el: ${formatDateSpanish(new Date().toISOString(), true)}</p>
       <table border="1" cellpadding="6" cellspacing="0" style="font-family: Arial; font-size: 12px; border-collapse: collapse;">
         <tr style="background-color: #1D4ED8; color: #ffffff; font-weight: bold;">
@@ -154,18 +181,18 @@ export function exportResponsesToExcel(form: Form, responses: FormResponse[]) {
           <th>Tiempo (segundos)</th>
           <th>Correo</th>
           <th>Departamento</th>
-          ${fields.map(f => `<th>${f.title}</th>`).join('')}
+          ${fields.map(f => `<th>${xlsCell(f.title)}</th>`).join('')}
         </tr>
   `;
 
   responses.forEach(resp => {
     tableHtml += `<tr>
-      <td>${resp.folio}</td>
+      <td>${xlsCell(resp.folio)}</td>
       <td>${formatDateSpanish(resp.submittedAt, true)}</td>
       <td>${resp.completionTimeSeconds}</td>
-      <td>${resp.respondentEmail || 'Anónimo'}</td>
-      <td>${resp.respondentDepartment || 'No especificado'}</td>
-      ${fields.map(f => `<td>${formatAnswerForExport(f, resp.answers[f.id]) || '-'}</td>`).join('')}
+      <td>${xlsCell(resp.respondentEmail || 'Anónimo')}</td>
+      <td>${xlsCell(resp.respondentDepartment || 'No especificado')}</td>
+      ${fields.map(f => `<td>${xlsCell(formatAnswerForExport(f, resp.answers[f.id]) || '-')}</td>`).join('')}
     </tr>`;
   });
 

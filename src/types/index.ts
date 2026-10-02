@@ -19,6 +19,21 @@ export type FormFieldType =
   | 'banner'
   | 'image';
 
+export type FontId =
+  | 'sans' | 'serif' | 'mono'
+  | 'inter' | 'roboto' | 'opensans' | 'lato' | 'montserrat' | 'poppins' | 'nunito' | 'sourcesans'
+  | 'merriweather' | 'playfair' | 'lora' | 'jetbrains';
+
+/** Look of a question title. Anything left undefined inherits from the form (or the theme default). */
+export interface TitleStyle {
+  color?: string;
+  size?: 'sm' | 'md' | 'lg' | 'xl';
+  weight?: 'normal' | 'semibold' | 'bold';
+  italic?: boolean;
+  underline?: boolean;
+  fontFamily?: FontId;
+}
+
 export interface FormFieldValidation {
   minLength?: number;
   maxLength?: number;
@@ -40,6 +55,8 @@ export interface FormField {
   title: string;
   description?: string;
   placeholder?: string;
+  /** Custom look of this field's title (overrides the form's title style). */
+  titleStyle?: TitleStyle;
   /** Share of the row this field takes (fields with partial width flow side by side). Default: full. */
   width?: 'full' | 'half' | 'third' | 'two_thirds';
   required: boolean;
@@ -75,7 +92,9 @@ export interface FormField {
 export interface FormDesign {
   primaryColor: string;
   accentColor: string;
-  fontFamily: 'sans' | 'serif' | 'mono';
+  fontFamily: FontId;
+  /** Default style for every question title in the form (a field can override it). */
+  titleStyle?: TitleStyle;
   themeStyle: 'clean' | 'compact' | 'institutional';
   /** Colour of the final submit button; falls back to primaryColor. */
   submitButtonColor?: string;
@@ -91,6 +110,8 @@ export interface FormSettings {
   notifyEmailOnSubmit: boolean;
   notificationEmails: string[];
   closeDate?: string;
+  /** Ask the respondent a small verification question before submitting (anti-spam) */
+  captchaEnabled?: boolean;
   /** Customisation of the automatic e-mail field */
   emailLabel?: string;
   emailHelp?: string;
@@ -101,6 +122,12 @@ export interface FormSettings {
 }
 
 export type FormStatus = 'draft' | 'published' | 'closed';
+
+/** Captcha that applies to a form, decided by the server (provider + public site key; never the secret). */
+export interface FormCaptcha {
+  provider: 'builtin' | 'turnstile' | 'hcaptcha' | 'recaptcha';
+  siteKey?: string;
+}
 
 export interface Form {
   id: string;
@@ -119,6 +146,7 @@ export interface Form {
   design: FormDesign;
   settings: FormSettings;
   responseCount: number;
+  captcha?: FormCaptcha | null;
 }
 
 export interface FormResponse {

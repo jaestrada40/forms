@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import bcrypt from 'bcryptjs';
+import { encryptSecret, isEncryptedSecret } from './secrets.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -75,7 +76,16 @@ export async function initializeDatabase() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled_at TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS token_valid_after TIMESTAMPTZ;
   `);
+
+  // One-time migration: MFA seeds used to be stored in plaintext
+  const legacy = await db.query('SELECT id, mfa_secret FROM users WHERE mfa_secret IS NOT NULL');
+  for (const row of legacy.rows) {
+    if (!isEncryptedSecret(row.mfa_secret)) {
+      await db.query('UPDATE users SET mfa_secret = $1 WHERE id = $2', [encryptSecret(row.mfa_secret), row.id]);
+    }
+  }
 
   const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
   const password = process.env.ADMIN_PASSWORD;

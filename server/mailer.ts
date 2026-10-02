@@ -1,6 +1,8 @@
-import crypto from 'node:crypto';
 import nodemailer, { Transporter } from 'nodemailer';
 import { getSetting, setSetting } from './db.js';
+import { decryptSecret, encryptSecret } from './secrets.js';
+
+export { encryptSecret };
 
 /**
  * Outgoing e-mail. The SMTP server is configured from the app (Configuración → Servidor de correo) and saved in the
@@ -19,23 +21,6 @@ export interface SmtpConfig {
 }
 
 const SETTING_KEY = 'smtp';
-
-// The password is encrypted at rest with a key derived from JWT_SECRET.
-const secretKey = () => crypto.createHash('sha256').update(process.env.JWT_SECRET ?? 'formularios').digest();
-
-export function encryptSecret(plain: string): string {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', secretKey(), iv);
-  const data = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
-  return [iv, cipher.getAuthTag(), data].map(b => b.toString('base64')).join('.');
-}
-
-function decryptSecret(token: string): string {
-  const [iv, tag, data] = token.split('.').map(p => Buffer.from(p, 'base64'));
-  const decipher = crypto.createDecipheriv('aes-256-gcm', secretKey(), iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
-}
 
 export const getStoredSmtp = () => getSetting<SmtpConfig | null>(SETTING_KEY, null);
 

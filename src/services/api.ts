@@ -9,7 +9,8 @@ export interface SessionUser {
 }
 
 export interface AuthSession {
-  token: string;
+  /** Returned by the API for non-browser clients; the browser session lives in an HttpOnly cookie, never in storage. */
+  token?: string;
   user: SessionUser;
 }
 
@@ -22,21 +23,27 @@ export const session = {
       return value ? JSON.parse(value) as AuthSession : null;
     } catch { return null; }
   },
-  save(value: AuthSession) { localStorage.setItem(sessionKey, JSON.stringify(value)); },
+  // Only the profile is kept for the UI; the credential itself is the HttpOnly cookie set by the API
+  save(value: AuthSession) { localStorage.setItem(sessionKey, JSON.stringify({ user: value.user })); },
   clear() { localStorage.removeItem(sessionKey); },
 };
 
 async function request<T>(path: string, init: RequestInit = {}, bearerToken?: string): Promise<T> {
-  const currentSession = session.read();
-  const token = bearerToken ?? currentSession?.token;
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      // Only the short-lived MFA tokens travel as a header
+      ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
       ...init.headers,
     },
   });
+  // The server revoked or expired the session (deactivated user, password changed, 8 h elapsed): back to the login
+  if (response.status === 401 && !path.startsWith('/api/auth/') && session.read()) {
+    session.clear();
+    window.location.reload();
+  }
   if (response.status === 204) return undefined as T;
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message || 'No fue posible completar la solicitud.');
@@ -76,6 +83,13 @@ export interface PublicFormRow {
   description: string;
   department: string;
   definition: { fields: unknown[]; design: Record<string, unknown>; settings: Record<string, unknown> };
+  captcha?: { provider: 'builtin' | 'turnstile' | 'hcaptcha' | 'recaptcha'; siteKey?: string } | null;
+}
+
+export interface CaptchaSettings {
+  provider: 'none' | 'turnstile' | 'hcaptcha' | 'recaptcha';
+  siteKey: string;
+  hasSecret: boolean;
 }
 
 export interface AuditLogRow {
@@ -160,6 +174,7 @@ export interface UpdateProfilePayload {
 }
 
 export const api = {
+  logout: () => request<void>('/api/auth/logout', { method: 'POST' }).catch(() => undefined),
   login: (email: string, password: string) =>
     request<LoginResult>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   mfaSetup: (mfaToken: string) => request<MfaSetupInfo>('/api/auth/mfa/setup', { method: 'POST' }, mfaToken),
@@ -190,6 +205,11 @@ export const api = {
   createReportSchedule: (payload: { frequency: string; recipients: string[]; includeCsv: boolean }) => request<ReportScheduleRow>('/api/report-schedules', { method: 'POST', body: JSON.stringify(payload) }),
   deleteReportSchedule: (id: string) => request<void>(`/api/report-schedules/${id}`, { method: 'DELETE' }),
   sendReportScheduleNow: (id: string) => request<{ ok: true }>(`/api/report-schedules/${id}/send`, { method: 'POST' }),
+  getCaptchaSettings: () => request<CaptchaSettings>('/api/settings/captcha'),
+  saveCaptchaSettings: (payload: { provider: string; siteKey: string; secretKey?: string }) => request<{ ok: true }>('/api/settings/captcha', { method: 'PUT', body: JSON.stringify(payload) }),
+  verifyCaptchaSettings: () => request<{ ok: true }>('/api/settings/captcha/verify', { method: 'POST' }),
+  getCaptchaStatus: () => request<{ provider: 'none' | 'turnstile' | 'hcaptcha' | 'recaptcha'; siteKey: string }>('/api/settings/captcha-status'),
+  getPublicChallenge: (formId: string) => request<{ question: string; token: string }>(`/api/public/forms/${formId}/challenge`),
   getNotifications: () => request<NotificationRow[]>('/api/notifications'),
   updateInstitutionSettings: (payload: InstitutionSettings) => request<InstitutionSettings>('/api/settings/institution', { method: 'PATCH', body: JSON.stringify(payload) }),
   resetUserMfa: (userId: string) => request<UserRow>(`/api/users/${userId}/mfa-reset`, { method: 'POST' }),

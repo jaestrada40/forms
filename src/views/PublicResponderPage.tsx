@@ -3,7 +3,7 @@ import { Loader2, AlertCircle } from 'lucide-react';
 import { api } from '../services/api';
 import { publicFormRowToForm } from '../services/mappers';
 import { Form, FormResponse } from '../types';
-import { PublicFormView } from './PublicFormView';
+import { PublicFormView, SubmitExtra } from './PublicFormView';
 
 interface PublicResponderPageProps {
   formId: string;
@@ -25,13 +25,14 @@ export const PublicResponderPage: React.FC<PublicResponderPageProps> = ({ formId
     return () => { cancelled = true; };
   }, [formId]);
 
-  const handleSubmitResponse = async (newResponse: FormResponse) => {
+  const handleSubmitResponse = async (newResponse: FormResponse, extra?: SubmitExtra) => {
     const created = await api.submitResponse(newResponse.formId, {
       answers: newResponse.answers,
       respondentEmail: newResponse.respondentEmail || undefined,
       respondentName: newResponse.respondentName || undefined,
       respondentDepartment: newResponse.respondentDepartment || undefined,
       completionTimeSeconds: newResponse.completionTimeSeconds,
+      ...extra,
     });
     return { folio: created.folio, submittedAt: created.submitted_at };
   };

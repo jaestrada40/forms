@@ -49,6 +49,7 @@ export function publicFormRowToForm(row: PublicFormRow): Form {
     design: { ...defaultDesign, ...(row.definition?.design as Partial<FormDesign>) },
     settings: { ...defaultSettings(row.department), ...(row.definition?.settings as Partial<FormSettings>) },
     responseCount: 0,
+    captcha: row.captcha ?? null,
   };
 }
 

@@ -1,0 +1,10 @@
+# Cabeceras HTTP para hosting estático (Netlify, Cloudflare Pages). Vite copia este archivo a dist/.
+# frame-ancestors evita que otro sitio incruste la aplicación en un iframe (clickjacking).
+# Para permitir incrustar los formularios públicos en un sitio institucional, agregue su origen:
+#   Content-Security-Policy: frame-ancestors 'self' https://www.ejemplo.gob.gt
+/*
+  Content-Security-Policy: frame-ancestors 'self'
+  X-Frame-Options: SAMEORIGIN
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
