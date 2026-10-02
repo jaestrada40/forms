@@ -14,8 +14,11 @@ import {
   AlertCircle,
   FileCheck2,
   Lock,
-  RotateCcw
+  RotateCcw,
+  Pencil
 } from 'lucide-react';
+import { Pagination, usePagination } from '../components/Pagination';
+import { ModalWrapper } from '../components/Modals';
 import { UserAccount, UserRole, UserStatus } from '../types';
 
 interface UsersViewProps {
@@ -23,6 +26,9 @@ interface UsersViewProps {
   onOpenInviteModal: () => void;
   onUpdateUserRole: (userId: string, newRole: UserRole) => void;
   onResetUserMfa: (userId: string) => void;
+  onChangeUserPassword: (userId: string, password: string) => Promise<void> | void;
+  onEditUser: (userId: string, data: { name: string; email: string; department: string }) => Promise<void> | void;
+  departments: string[];
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -31,8 +37,15 @@ export const UsersView: React.FC<UsersViewProps> = ({
   onOpenInviteModal,
   onUpdateUserRole,
   onResetUserMfa,
+  onChangeUserPassword,
+  onEditUser,
+  departments,
   showToast
 }) => {
+  const [passwordUser, setPasswordUser] = useState<UserAccount | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [editUser, setEditUser] = useState<UserAccount | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', email: '', department: '' });
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -66,6 +79,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
     const matchesRole = roleFilter === 'all' || u.role === roleFilter;
     return matchesSearch && matchesRole;
   });
+  const pg = usePagination(filteredUsers, `${searchQuery}|${roleFilter}`);
 
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
@@ -108,6 +122,88 @@ export const UsersView: React.FC<UsersViewProps> = ({
 
   return (
     <div className="space-y-6">
+      <ModalWrapper
+        isOpen={!!passwordUser}
+        onClose={() => setPasswordUser(null)}
+        title={`Cambiar contraseña${passwordUser ? ` · ${passwordUser.name}` : ''}`}
+      >
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!passwordUser || newPassword.length < 8) return;
+            await onChangeUserPassword(passwordUser.id, newPassword);
+            setPasswordUser(null);
+            setNewPassword('');
+          }}
+          className="space-y-4"
+        >
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+              Nueva contraseña
+            </label>
+            <input
+              type="text"
+              required
+              minLength={8}
+              autoComplete="off"
+              placeholder="Mínimo 8 caracteres"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+            />
+          </div>
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <button type="button" onClick={() => setPasswordUser(null)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg">
+              Cancelar
+            </button>
+            <button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg">
+              Guardar contraseña
+            </button>
+          </div>
+        </form>
+      </ModalWrapper>
+
+      <ModalWrapper isOpen={!!editUser} onClose={() => setEditUser(null)} title="Editar usuario">
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!editUser) return;
+            await onEditUser(editUser.id, editForm);
+            setEditUser(null);
+          }}
+          className="space-y-4"
+        >
+          {([['Nombre completo', 'name', 'text'], ['Correo electrónico', 'email', 'email']] as const).map(([label, key, type]) => (
+            <div key={key}>
+              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">{label}</label>
+              <input
+                type={type}
+                required
+                value={editForm[key]}
+                onChange={(e) => setEditForm(prev => ({ ...prev, [key]: e.target.value }))}
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+              />
+            </div>
+          ))}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Departamento</label>
+            <select
+              value={editForm.department}
+              onChange={(e) => setEditForm(prev => ({ ...prev, department: e.target.value }))}
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+            >
+              {[...new Set([editForm.department, ...departments])].filter(Boolean).map(d => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+            <button type="button" onClick={() => setEditUser(null)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
+            <button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg">Guardar cambios</button>
+          </div>
+        </form>
+      </ModalWrapper>
+
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -127,7 +223,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
           className="px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-2 shadow-xs transition-colors"
         >
           <UserPlus className="w-4 h-4" />
-          <span>Invitar Usuario Institucional</span>
+          <span>Crear usuario</span>
         </button>
       </div>
 
@@ -209,7 +305,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
-              {filteredUsers.map(user => (
+              {pg.pageItems.map(user => (
                 <tr key={user.id} className="hover:bg-slate-50/80 transition-colors">
                   <td className="py-3.5 px-4">
                     <div className="flex items-center gap-3">
@@ -289,11 +385,24 @@ export const UsersView: React.FC<UsersViewProps> = ({
                           <button
                             onClick={() => {
                               closeMenu();
-                              showToast(`Invitación reenviada a ${user.email}`, 'info');
+                              setEditUser(user);
+                              setEditForm({ name: user.name, email: user.email, department: user.department });
                             }}
-                            className="w-full px-2.5 py-1 text-xs text-blue-700 hover:bg-blue-50 rounded"
+                            className="w-full px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50 rounded flex items-center gap-1.5"
                           >
-                            Reenviar credenciales
+                            <Pencil className="w-3.5 h-3.5" />
+                            Editar nombre, correo y departamento
+                          </button>
+                          <button
+                            onClick={() => {
+                              closeMenu();
+                              setPasswordUser(user);
+                              setNewPassword('');
+                            }}
+                            className="w-full px-2.5 py-1 text-xs text-blue-700 hover:bg-blue-50 rounded flex items-center gap-1.5"
+                          >
+                            <Lock className="w-3.5 h-3.5" />
+                            Cambiar contraseña
                           </button>
                           {user.mfaEnabled && (
                             <button
@@ -318,6 +427,13 @@ export const UsersView: React.FC<UsersViewProps> = ({
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={pg.page}
+          pageSize={pg.pageSize}
+          total={pg.total}
+          onPageChange={pg.setPage}
+          onPageSizeChange={pg.setPageSize}
+        />
       </div>
     </div>
   );

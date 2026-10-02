@@ -16,7 +16,7 @@ import {
   EyeOff
 } from 'lucide-react';
 import { ActiveScreen, Form } from '../types';
-import { api, AuditLogRow, SessionUser } from '../services/api';
+import { api, NotificationRow, SessionUser } from '../services/api';
 import { ModalWrapper } from './Modals';
 import { formatDateSpanish } from '../utils/helpers';
 
@@ -31,6 +31,8 @@ interface HeaderProps {
   currentUser: SessionUser | null;
   onLogout: () => void;
   onProfileUpdated: (user: SessionUser) => void;
+  onNavigate: (screen: ActiveScreen) => void;
+  onOpenFormResponses: (formId: string) => void;
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -201,67 +203,6 @@ const ProfileModal: React.FC<{
   );
 };
 
-const AUDIT_ACTION_LABELS: Record<string, string> = {
-  LOGIN: 'Inicio de sesión',
-  LOGIN_MFA: 'Inicio de sesión (MFA)',
-  CREATE: 'Creación',
-  UPDATE: 'Actualización',
-  DELETE: 'Eliminación',
-  SUBMIT: 'Respuesta recibida',
-  INVITE: 'Invitación de usuario',
-  MFA_ENABLE: 'MFA activado',
-  MFA_RESET: 'MFA restablecido',
-};
-
-const AuditLogModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
-  const [entries, setEntries] = useState<AuditLogRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  React.useEffect(() => {
-    if (!isOpen) return;
-    setLoading(true);
-    setError(null);
-    api.getAuditLog()
-      .then(setEntries)
-      .catch(err => setError(err instanceof Error ? err.message : 'No fue posible cargar el registro de auditoría.'))
-      .finally(() => setLoading(false));
-  }, [isOpen]);
-
-  return (
-    <ModalWrapper isOpen={isOpen} onClose={onClose} title="Registro de auditoría" maxWidth="max-w-2xl">
-      {loading ? (
-        <div className="flex items-center justify-center py-10 text-slate-400">
-          <Loader2 className="w-5 h-5 animate-spin" />
-        </div>
-      ) : error ? (
-        <p className="text-sm text-rose-600">{error}</p>
-      ) : entries.length === 0 ? (
-        <p className="text-sm text-slate-500 text-center py-6">Aún no hay actividad registrada.</p>
-      ) : (
-        <div className="max-h-96 overflow-y-auto divide-y divide-slate-100 -mx-2">
-          {entries.map(entry => (
-            <div key={entry.id} className="px-2 py-2.5 text-xs flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-semibold text-slate-800">
-                  {AUDIT_ACTION_LABELS[entry.action] || entry.action}
-                  <span className="text-slate-400 font-normal"> · {entry.entity_type}</span>
-                </div>
-                <div className="text-slate-500 truncate">
-                  {entry.actor_name || 'Sistema'} {entry.actor_email ? `(${entry.actor_email})` : ''}
-                </div>
-              </div>
-              <div className="text-[11px] text-slate-400 whitespace-nowrap shrink-0">
-                {formatDateSpanish(entry.created_at, true)}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </ModalWrapper>
-  );
-};
-
 export const Header: React.FC<HeaderProps> = ({
   onOpenMobileSidebar,
   currentScreen,
@@ -273,41 +214,52 @@ export const Header: React.FC<HeaderProps> = ({
   currentUser,
   onLogout,
   onProfileUpdated,
+  onNavigate,
+  onOpenFormResponses,
   showToast
 }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
-  const [showAuditModal, setShowAuditModal] = useState(false);
-  const [notifications, setNotifications] = useState([
-    {
-      id: 'n1',
-      title: 'Nueva respuesta registrada',
-      detail: 'Encuesta de Clima Laboral y Bienestar 2026 (Folio #FOR-2026-8946)',
-      time: 'Hace 8 min',
-      unread: true,
-    },
-    {
-      id: 'n2',
-      title: 'Solicitud de viático enviada',
-      detail: 'Marcela Silva ingresó comisión de servicio a Valparaíso',
-      time: 'Hace 45 min',
-      unread: true,
-    },
-    {
-      id: 'n3',
-      title: 'Reporte programado enviado',
-      detail: 'El informe semanal fue entregado a 4 destinatarios institucionales',
-      time: 'Ayer',
-      unread: false,
-    },
-  ]);
+  const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  const seenKey = `notifications_seen_${currentUser?.id ?? 'anon'}`;
+  const [lastSeen, setLastSeen] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem(seenKey);
+      if (stored) return Number(stored);
+      localStorage.setItem(seenKey, String(Date.now())); // first visit: only count what arrives from now on
+    } catch { /* storage unavailable */ }
+    return Date.now();
+  });
+
+  const canSeeNotifications = currentUser?.role === 'Administrador' || currentUser?.role === 'Creador' || currentUser?.role === 'Analista';
+
+  useEffect(() => {
+    if (!canSeeNotifications) return;
+    let cancelled = false;
+    const load = () => api.getNotifications().then(rows => { if (!cancelled) setNotifications(rows); }).catch(() => {});
+    load();
+    const timer = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [canSeeNotifications]);
 
   const markAllRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, unread: false })));
+    const now = Date.now();
+    setLastSeen(now);
+    try { localStorage.setItem(seenKey, String(now)); } catch { /* ignore */ }
   };
 
-  const unreadCount = notifications.filter(n => n.unread).length;
+  const isUnread = (n: NotificationRow) => new Date(n.submitted_at).getTime() > lastSeen;
+  const unreadCount = notifications.filter(isUnread).length;
+
+  const timeAgo = (iso: string) => {
+    const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
+    if (minutes < 1) return 'Ahora';
+    if (minutes < 60) return `Hace ${minutes} min`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `Hace ${hours} h`;
+    return formatDateSpanish(iso);
+  };
 
   const screenTitles: Record<ActiveScreen, string> = {
     home: 'Panel Institucional',
@@ -317,6 +269,7 @@ export const Header: React.FC<HeaderProps> = ({
     reports: 'Reportes y Analíticas',
     templates: 'Galería de Plantillas',
     users: 'Usuarios y Permisos',
+    audit: 'Registro de Auditoría',
     settings: 'Configuración del Sistema',
     public_view: 'Vista Pública',
   };
@@ -404,19 +357,25 @@ export const Header: React.FC<HeaderProps> = ({
                 )}
               </div>
               <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                {notifications.length === 0 && (
+                  <div className="p-6 text-center text-xs text-slate-400">
+                    {canSeeNotifications ? 'Aún no hay respuestas recibidas.' : 'Sin notificaciones.'}
+                  </div>
+                )}
                 {notifications.map(n => (
-                  <div
+                  <button
                     key={n.id}
-                    className={`p-3 text-xs transition-colors hover:bg-slate-50 ${
-                      n.unread ? 'bg-blue-50/40' : ''
+                    onClick={() => { setShowNotifications(false); onOpenFormResponses(n.form_id); }}
+                    className={`w-full text-left p-3 text-xs transition-colors hover:bg-slate-50 ${
+                      isUnread(n) ? 'bg-blue-50/40' : ''
                     }`}
                   >
                     <div className="flex items-center justify-between font-semibold text-slate-800 mb-0.5">
-                      <span>{n.title}</span>
-                      <span className="text-[10px] text-slate-400 font-normal">{n.time}</span>
+                      <span>Nueva respuesta registrada</span>
+                      <span className="text-[10px] text-slate-400 font-normal">{timeAgo(n.submitted_at)}</span>
                     </div>
-                    <div className="text-slate-600 leading-snug">{n.detail}</div>
-                  </div>
+                    <div className="text-slate-600 leading-snug">{n.form_title} (Folio {n.folio})</div>
+                  </button>
                 ))}
               </div>
               <div className="p-2 border-t border-slate-100 text-center bg-slate-50">
@@ -465,7 +424,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
                 {currentUser?.role === 'Administrador' && (
                   <button
-                    onClick={() => { setShowUserMenu(false); setShowAuditModal(true); }}
+                    onClick={() => { setShowUserMenu(false); onNavigate('audit'); }}
                     className="w-full text-left px-3 py-2 rounded-md hover:bg-slate-50 text-slate-700"
                   >
                     Registro de auditoría
@@ -492,7 +451,6 @@ export const Header: React.FC<HeaderProps> = ({
         onProfileUpdated={onProfileUpdated}
         showToast={showToast}
       />
-      <AuditLogModal isOpen={showAuditModal} onClose={() => setShowAuditModal(false)} />
-    </header>
+          </header>
   );
 };

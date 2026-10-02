@@ -18,12 +18,15 @@ import {
   Users
 } from 'lucide-react';
 import { Form, FormResponse } from '../types';
+import { Pagination, usePagination } from '../components/Pagination';
+import { exportReportPDF } from '../utils/pdf';
 import { formatTimeSeconds, formatDateSpanish, exportTableToCSV } from '../utils/helpers';
 
 interface ReportsViewProps {
   forms: Form[];
   responses: FormResponse[];
   onOpenScheduleModal: () => void;
+  institutionName: string;
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -31,6 +34,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   forms,
   responses,
   onOpenScheduleModal,
+  institutionName,
   showToast
 }) => {
   const [selectedFormFilter, setSelectedFormFilter] = useState<string>('all');
@@ -131,6 +135,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       });
   }, [departmentStats, totalDeptResponses]);
 
+  const deptPg = usePagination(departmentStats, `${selectedFormFilter}|${selectedDateRange}|${selectedDepartment}`);
+
   const handleExportBreakdown = () => {
     if (departmentStats.length === 0) {
       showToast('No hay datos para exportar con los filtros actuales.', 'info');
@@ -160,6 +166,27 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const totalTrendResponses = trendData.reduce((acc, d) => acc + d.val, 0);
   const maxTrendVal = Math.max(1, ...trendData.map(d => d.val));
 
+  const handleExportPDF = () => {
+    const rangeLabels: Record<string, string> = { '7_days': 'Últimos 7 días', '30_days': 'Últimos 30 días', '90_days': 'Últimos 90 días', all_time: 'Histórico completo' };
+    exportReportPDF({
+      institution: institutionName,
+      filters: [
+        `Formulario: ${selectedFormFilter === 'all' ? 'Todos' : forms.find(f => f.id === selectedFormFilter)?.title || '—'}`,
+        `Período: ${rangeLabels[selectedDateRange] || selectedDateRange}`,
+        `Departamento: ${selectedDepartment === 'all' ? 'Todos' : selectedDepartment}`,
+      ],
+      kpis: [
+        { label: 'Respuestas', value: String(kpis.totalResp) },
+        { label: 'Formularios con respuestas', value: kpis.responseCoverage },
+        { label: 'Tiempo promedio', value: kpis.avgTime },
+        { label: 'Formularios activos', value: String(kpis.activeFormsCount) },
+      ],
+      departments: departmentStats,
+      trend: trendData,
+    });
+    showToast('PDF generado con éxito', 'success');
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -178,14 +205,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => showToast('Configuración de vista guardada en sus preferencias', 'success')}
-            className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-2xs"
-          >
-            <Bookmark className="w-3.5 h-3.5 text-blue-600" />
-            <span>Guardar vista</span>
-          </button>
-
-          <button
             onClick={onOpenScheduleModal}
             className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-2xs"
           >
@@ -194,7 +213,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </button>
 
           <button
-            onClick={() => window.print()}
+            onClick={handleExportPDF}
             className="px-3.5 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors"
           >
             <Download className="w-3.5 h-3.5" />
@@ -442,7 +461,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               {departmentStats.length === 0 && (
                 <tr><td colSpan={4} className="py-6 text-center text-slate-400">No hay datos con los filtros actuales.</td></tr>
               )}
-              {departmentStats.map((row) => (
+              {deptPg.pageItems.map((row) => (
                 <tr key={row.department} className="hover:bg-slate-50 transition-colors">
                   <td className="py-3 px-4 font-semibold text-slate-900">
                     {row.department}
@@ -461,6 +480,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={deptPg.page}
+          pageSize={deptPg.pageSize}
+          total={deptPg.total}
+          onPageChange={deptPg.setPage}
+          onPageSizeChange={deptPg.setPageSize}
+        />
       </div>
     </div>
   );

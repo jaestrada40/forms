@@ -1,3 +1,6 @@
+import { isFieldVisible, isHeaderMedia, isQuestionField } from '../utils/helpers';
+import { fieldSpan, getFormTheme, getSubmitButton } from '../utils/formTheme';
+import { FormBannerBar, FormMediaBlock, HeaderBanners, HeaderLogos } from '../components/FormBranding';
 import React, { useState, useMemo } from 'react';
 import { 
   ShieldCheck, 
@@ -13,12 +16,13 @@ import {
   Lock 
 } from 'lucide-react';
 import { Form, FormField, FormResponse } from '../types';
-import { generateFolio, formatDateSpanish } from '../utils/helpers';
+import { formatDateSpanish } from '../utils/helpers';
 import { GUATEMALA_DEPARTMENTS, GUATEMALA_DEPARTMENT_NAMES } from '../data/guatemalaLocations';
 
 interface PublicFormViewProps {
   form: Form;
-  onSubmitResponse: (newResponse: FormResponse) => void;
+  /** Persists the response and resolves with the folio assigned by the server. Rejects with a user-facing message on failure. */
+  onSubmitResponse: (newResponse: FormResponse) => Promise<{ folio: string; submittedAt: string }>;
   onExitToAdmin?: () => void;
 }
 
@@ -34,6 +38,10 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
   const [startTime] = useState<number>(Date.now());
   const [submittedFolio, setSubmittedFolio] = useState<string | null>(null);
   const [submittedAt, setSubmittedAt] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [contactEmail, setContactEmail] = useState('');
+  const requiresEmail = !!(form.settings.collectEmails || form.settings.limitOneResponsePerUser);
 
   // Group fields into sections
   const sections = useMemo(() => {
@@ -54,7 +62,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
           description: f.description || '',
           fields: []
         };
-      } else {
+      } else if (!isHeaderMedia(f)) {
         current.fields.push(f);
       }
     });
@@ -87,16 +95,15 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
     const sec = sections[secIdx];
     const newErrors: Record<string, string> = {};
 
+    if (requiresEmail && secIdx === (form.settings.emailPosition === 'bottom' ? sections.length - 1 : 0) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail.trim())) {
+      newErrors.__email = 'Ingrese un correo electrónico válido.';
+    }
+
     sec.fields.forEach(f => {
       const val = answers[f.id];
 
-      // Check conditional visibility
-      if (f.conditionalLogic && f.conditionalLogic.dependsOnFieldId) {
-        const parentVal = answers[f.conditionalLogic.dependsOnFieldId];
-        if (parentVal !== f.conditionalLogic.value) {
-          return; // skipped
-        }
-      }
+      // Hidden or non-question blocks (banner / image) are not validated
+      if (!isQuestionField(f) || !isFieldVisible(f, answers)) return;
 
       if (f.required) {
         if (val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0)) {
@@ -167,19 +174,24 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validateSection(currentSectionIndex)) return;
+    if (submitting) return;
+    // Validate every section, not just the last one, so nothing slips through
+    for (let i = 0; i < sections.length; i++) {
+      if (!validateSection(i)) {
+        setCurrentSectionIndex(i);
+        return;
+      }
+    }
 
-    const folio = generateFolio();
-    const nowIso = new Date().toISOString();
-    const timeSpent = Math.max(15, Math.round((Date.now() - startTime) / 1000));
+    const timeSpent = Math.max(1, Math.round((Date.now() - startTime) / 1000));
 
     // Try finding email/name in answers
-    let emailFound = '';
+    let emailFound = contactEmail.trim();
     let nameFound = '';
     for (const f of form.fields) {
-      if (f.type === 'email' && answers[f.id]) emailFound = answers[f.id];
+      if (f.type === 'email' && answers[f.id] && !emailFound) emailFound = answers[f.id];
       if ((f.type === 'short_text' && f.title.toLowerCase().includes('nombre')) && answers[f.id]) {
         nameFound = answers[f.id];
       }
@@ -188,18 +200,30 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
     const newResponse: FormResponse = {
       id: `resp_${Date.now()}`,
       formId: form.id,
-      folio,
-      submittedAt: nowIso,
+      folio: '',
+      submittedAt: '',
       completionTimeSeconds: timeSpent,
-      respondentEmail: emailFound || 'funcionario.anonimo@gobierno.cl',
-      respondentName: nameFound || 'Funcionario Registrado',
+      respondentEmail: emailFound || undefined,
+      respondentName: nameFound || undefined,
       respondentDepartment: answers['f_depto'] || form.department,
-      answers: { ...answers },
+      answers: Object.fromEntries(
+        form.fields
+          .filter(f => isQuestionField(f) && isFieldVisible(f, answers) && answers[f.id] !== undefined)
+          .map(f => [f.id, answers[f.id]]),
+      ),
     };
 
-    onSubmitResponse(newResponse);
-    setSubmittedFolio(folio);
-    setSubmittedAt(nowIso);
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const saved = await onSubmitResponse(newResponse);
+      setSubmittedFolio(saved.folio);
+      setSubmittedAt(saved.submittedAt);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'No fue posible enviar su respuesta. Intente nuevamente.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   // IF ALREADY SUBMITTED: SHOW CONFIRMATION SCREEN
@@ -272,8 +296,34 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
     );
   }
 
+  const theme = getFormTheme(form.design);
+  const submitButton = getSubmitButton(form.design);
+
+  const emailSection = form.settings.emailPosition === 'bottom' ? totalSections - 1 : 0;
+  const showEmailAtTop = requiresEmail && emailSection === 0 && currentSectionIndex === 0 && form.settings.emailPosition !== 'bottom';
+  const showEmailAtBottom = requiresEmail && form.settings.emailPosition === 'bottom' && currentSectionIndex === totalSections - 1;
+  const emailBlock = (
+            <div className={`col-span-6 bg-white ${theme.card} ${theme.cardPad} ${errors.__email ? '!border-rose-400 ring-2 ring-rose-100' : ''}`}>
+              <label className="block text-sm font-semibold text-slate-900 mb-1">
+                {form.settings.emailLabel || 'Correo electrónico'} <span className="text-rose-500 font-bold">*</span>
+              </label>
+              {(form.settings.emailHelp || form.settings.limitOneResponsePerUser) && (
+                <p className="text-xs text-slate-500 mb-2">{form.settings.emailHelp || 'Solo se permite una respuesta por correo electrónico.'}</p>
+              )}
+              <input
+                type="email"
+                value={contactEmail}
+                onChange={(e) => { setContactEmail(e.target.value); if (errors.__email) setErrors(prev => { const c = { ...prev }; delete c.__email; return c; }); }}
+                placeholder={form.settings.emailPlaceholder || 'nombre@minfin.gob.gt'}
+                className={`w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 ${theme.input} focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600`}
+              />
+              {errors.__email && <p className="mt-1.5 text-xs text-rose-600">{errors.__email}</p>}
+            </div>
+  );
+
+
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col items-center py-6 px-4 sm:px-6">
+    <div className="min-h-screen bg-slate-100 flex flex-col items-center py-6 px-4 sm:px-6" style={theme.fontStyle}>
       {/* Return to admin top floating pill (admin preview only) */}
       <div className="w-full max-w-2xl mb-4 flex items-center justify-end text-xs text-slate-500">
         {onExitToAdmin && (
@@ -292,15 +342,14 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
         </div>
       </div>
 
-      <div className="w-full max-w-2xl space-y-4 pb-16">
+      <div className={`w-full max-w-2xl ${theme.gap} pb-16`}>
         {/* Form Header Card */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div 
-            className="h-2.5 w-full"
-            style={{ backgroundColor: form.design.primaryColor || '#1D4ED8' }}
-          />
-          <div className="p-6 sm:p-8">
-            <div className="flex items-center gap-2 text-xs font-semibold text-blue-700 uppercase tracking-wider mb-2">
+        <div className={`bg-white ${theme.card} overflow-hidden`}>
+          <HeaderBanners fields={form.fields} />
+          <FormBannerBar design={form.design} />
+          <div className={theme.headerPad}>
+            <HeaderLogos fields={form.fields} />
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-2" style={theme.primaryText}>
               <ShieldCheck className="w-4 h-4" />
               <span>{form.department}</span>
             </div>
@@ -324,8 +373,8 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                 </div>
                 <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-blue-600 transition-all duration-300"
-                    style={{ width: `${progressPercent}%` }}
+                    className="h-full transition-all duration-300"
+                    style={{ width: `${progressPercent}%`, backgroundColor: theme.primary }}
                   />
                 </div>
               </div>
@@ -344,16 +393,22 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
         )}
 
         {/* Question Cards */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {currentSection.fields.map((field) => {
+        <form onSubmit={handleSubmit} className={theme.gap}>
+          <div className={`grid grid-cols-6 ${theme.gridGap}`}>
+          {showEmailAtTop && emailBlock}
+
+          {currentSection.fields.filter(f => isFieldVisible(f, answers)).map((field) => {
+            if (field.type === 'banner' || field.type === 'image') {
+              return <div key={field.id} className="col-span-6"><FormMediaBlock field={field} cardClass={theme.card} /></div>;
+            }
             const hasError = !!errors[field.id];
             const val = answers[field.id];
 
             return (
               <div
                 key={field.id}
-                className={`bg-white rounded-xl border p-5 sm:p-6 shadow-2xs transition-all ${
-                  hasError ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200'
+                className={`${fieldSpan(field.width)} bg-white ${theme.card} ${theme.cardPad} transition-all ${
+                  hasError ? '!border-rose-400 ring-2 ring-rose-100' : ''
                 }`}
               >
                 <div className="mb-3">
@@ -393,7 +448,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                       value={val || ''}
                       onChange={(e) => handleFieldChange(field.id, e.target.value)}
                       placeholder={field.placeholder || '0'}
-                      className="w-full sm:w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 font-mono text-slate-800"
+                      className="w-full sm:max-w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 font-mono text-slate-800"
                     />
                   )}
 
@@ -402,7 +457,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                       type="email"
                       value={val || ''}
                       onChange={(e) => handleFieldChange(field.id, e.target.value)}
-                      placeholder={field.placeholder || 'nombre@gobierno.cl'}
+                      placeholder={field.placeholder || 'nombre@minfin.gob.gt'}
                       className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800"
                     />
                   )}
@@ -415,7 +470,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                       value={val || ''}
                       onChange={(e) => handleFieldChange(field.id, e.target.value.replace(/\D/g, '').slice(0, field.validation?.maxLength || 8))}
                       placeholder={field.placeholder || '+502 '}
-                      className="w-full sm:w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800"
+                      className="w-full sm:max-w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800"
                     />
                   )}
 
@@ -427,7 +482,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                       value={val || ''}
                       onChange={(e) => handleFieldChange(field.id, e.target.value.replace(/\D/g, '').slice(0, 13))}
                       placeholder={field.placeholder || '1234567890101'}
-                      className="w-full sm:w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800 font-mono"
+                      className="w-full sm:max-w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800 font-mono"
                     />
                   )}
 
@@ -438,7 +493,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                       value={val || ''}
                       onChange={(e) => handleFieldChange(field.id, e.target.value.toUpperCase().replace(/[^0-9K-]/g, '').slice(0, 10))}
                       placeholder={field.placeholder || '12345678-9'}
-                      className="w-full sm:w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800 font-mono"
+                      className="w-full sm:max-w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800 font-mono"
                     />
                   )}
 
@@ -477,7 +532,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                       type="date"
                       value={val || ''}
                       onChange={(e) => handleFieldChange(field.id, e.target.value)}
-                      className="w-full sm:w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800"
+                      className="w-full sm:max-w-64 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800"
                     />
                   )}
 
@@ -486,7 +541,7 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
                       type="time"
                       value={val || ''}
                       onChange={(e) => handleFieldChange(field.id, e.target.value)}
-                      className="w-full sm:w-48 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800"
+                      className="w-full sm:max-w-48 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:bg-white focus:ring-2 focus:ring-blue-600 text-slate-800"
                     />
                   )}
 
@@ -697,6 +752,9 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
           })}
 
           {/* Navigation Controls */}
+          {showEmailAtBottom && emailBlock}
+          </div>
+
           <div className="flex items-center justify-between pt-4">
             {currentSectionIndex > 0 ? (
               <button
@@ -713,7 +771,8 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
               <button
                 type="button"
                 onClick={handleNext}
-                className="px-6 py-2.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
+                style={theme.primaryBg}
+                className="px-6 py-2.5 hover:brightness-90 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs"
               >
                 <span>Siguiente sección</span>
                 <ArrowRight className="w-4 h-4" />
@@ -721,13 +780,18 @@ export const PublicFormView: React.FC<PublicFormViewProps> = ({
             ) : (
               <button
                 type="submit"
-                className="px-7 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors shadow-sm"
+                disabled={submitting}
+                style={submitButton.style}
+                className="px-7 py-2.5 hover:brightness-90 disabled:opacity-60 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all shadow-sm"
               >
                 <Send className="w-4 h-4" />
-                <span>Enviar respuestas</span>
+                <span>{submitting ? 'Enviando…' : submitButton.text}</span>
               </button>
             )}
           </div>
+          {submitError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg">{submitError}</div>
+          )}
         </form>
       </div>
     </div>

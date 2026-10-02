@@ -94,6 +94,8 @@ export async function initializeDatabase() {
 }
 
 export async function audit(actorId: string | undefined, action: string, entityType: string, entityId: string, metadata = {}) {
+  const institution = await getSetting<{ enableAuditLog?: boolean }>('institution', {});
+  if (institution.enableAuditLog === false) return;
   await db.query(
     'INSERT INTO audit_log (actor_id, action, entity_type, entity_id, metadata) VALUES ($1, $2, $3, $4, $5)',
     [actorId ?? null, action, entityType, entityId, metadata],

@@ -89,6 +89,33 @@ export interface AuditLogRow {
   actor_email: string | null;
 }
 
+export interface SmtpSettings {
+  source: 'app' | 'env' | 'none';
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  from: string;
+  hasPassword: boolean;
+}
+
+export interface ReportScheduleRow {
+  id: string;
+  frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly';
+  recipients: string[];
+  includeCsv: boolean;
+  ownerName: string;
+  lastSentAt: string;
+}
+
+export interface NotificationRow {
+  id: string;
+  folio: string;
+  submitted_at: string;
+  form_id: string;
+  form_title: string;
+}
+
 export interface UserRow {
   id: string;
   name: string;
@@ -150,7 +177,20 @@ export const api = {
   setMfaPolicy: (enforced: boolean) => request<{ enforced: boolean }>('/api/settings/mfa', { method: 'PATCH', body: JSON.stringify({ enforced }) }),
   getBranding: () => request<BrandingInfo>('/api/settings/branding'),
   getInstitutionSettings: () => request<InstitutionSettings>('/api/settings/institution'),
-  getAuditLog: () => request<AuditLogRow[]>('/api/audit-log'),
+  getAuditLog: (params: { page: number; pageSize: number; action?: string; search?: string; from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') qs.set(k, String(v)); });
+    return request<{ items: AuditLogRow[]; total: number }>(`/api/audit-log?${qs}`);
+  },
+  getSmtpSettings: () => request<SmtpSettings>('/api/settings/smtp'),
+  saveSmtpSettings: (payload: { host: string; port: number; secure: boolean; user: string; from: string; password?: string }) => request<{ ok: true }>('/api/settings/smtp', { method: 'PUT', body: JSON.stringify(payload) }),
+  sendSmtpTest: (to: string) => request<{ ok: true }>('/api/settings/smtp/test', { method: 'POST', body: JSON.stringify({ to }) }),
+  getEmailStatus: () => request<{ mode: 'smtp' | 'console' | 'off' }>('/api/settings/email'),
+  getReportSchedules: () => request<ReportScheduleRow[]>('/api/report-schedules'),
+  createReportSchedule: (payload: { frequency: string; recipients: string[]; includeCsv: boolean }) => request<ReportScheduleRow>('/api/report-schedules', { method: 'POST', body: JSON.stringify(payload) }),
+  deleteReportSchedule: (id: string) => request<void>(`/api/report-schedules/${id}`, { method: 'DELETE' }),
+  sendReportScheduleNow: (id: string) => request<{ ok: true }>(`/api/report-schedules/${id}/send`, { method: 'POST' }),
+  getNotifications: () => request<NotificationRow[]>('/api/notifications'),
   updateInstitutionSettings: (payload: InstitutionSettings) => request<InstitutionSettings>('/api/settings/institution', { method: 'PATCH', body: JSON.stringify(payload) }),
   resetUserMfa: (userId: string) => request<UserRow>(`/api/users/${userId}/mfa-reset`, { method: 'POST' }),
   me: () => request<{ user: SessionUser }>('/api/auth/me'),
@@ -167,7 +207,9 @@ export const api = {
   allResponses: () => request<ResponseRow[]>('/api/responses'),
   getPublicForm: (id: string) => request<PublicFormRow>(`/api/public/forms/${id}`),
   submitResponse: (formId: string, payload: unknown) => request<{ id: string; folio: string; submitted_at: string }>(`/api/public/forms/${formId}/responses`, { method: 'POST', body: JSON.stringify(payload) }),
+  getDepartments: () => request<string[]>('/api/departments'),
+  saveDepartments: (departments: string[]) => request<string[]>('/api/departments', { method: 'PUT', body: JSON.stringify({ departments }) }),
   users: () => request<UserRow[]>('/api/users'),
-  inviteUser: (payload: { name: string; email: string; role: string; department: string }) => request<UserRow>('/api/users', { method: 'POST', body: JSON.stringify(payload) }),
-  updateUser: (id: string, payload: { role?: string; status?: string }) => request<UserRow>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  inviteUser: (payload: { name: string; email: string; role: string; department: string; password: string }) => request<UserRow>('/api/users', { method: 'POST', body: JSON.stringify(payload) }),
+  updateUser: (id: string, payload: { name?: string; email?: string; department?: string; role?: string; status?: string; password?: string }) => request<UserRow>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
 };

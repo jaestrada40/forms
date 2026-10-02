@@ -15,7 +15,9 @@ export type FormFieldType =
   | 'matrix'
   | 'file_upload'
   | 'guatemala_location'
-  | 'section';
+  | 'section'
+  | 'banner'
+  | 'image';
 
 export interface FormFieldValidation {
   minLength?: number;
@@ -38,6 +40,8 @@ export interface FormField {
   title: string;
   description?: string;
   placeholder?: string;
+  /** Share of the row this field takes (fields with partial width flow side by side). Default: full. */
+  width?: 'full' | 'half' | 'third' | 'two_thirds';
   required: boolean;
   options?: string[];
   scaleMin?: number;
@@ -49,6 +53,19 @@ export interface FormField {
   validation?: FormFieldValidation;
   defaultValue?: string;
   conditionalLogic?: ConditionalLogic;
+  /** banner / image fields: picture as data URL */
+  imageSrc?: string;
+  /** image width as % of the form width (10-100) */
+  imageWidth?: number;
+  /** banner height in px */
+  imageHeight?: number;
+  imageAlign?: 'left' | 'center' | 'right';
+  /** optional background colour behind the picture (hex) */
+  imageBackground?: string;
+  /** banner: crop to fill the height (cover) or show the whole picture (contain) */
+  imageFit?: 'cover' | 'contain';
+  /** where the picture appears: inside the form flow (default) or in the header, above the title */
+  imagePlacement?: 'in_form' | 'above_title';
   fileConfig?: {
     allowedTypes: string[];
     maxMb: number;
@@ -60,7 +77,10 @@ export interface FormDesign {
   accentColor: string;
   fontFamily: 'sans' | 'serif' | 'mono';
   themeStyle: 'clean' | 'compact' | 'institutional';
-  headerBanner?: string;
+  /** Colour of the final submit button; falls back to primaryColor. */
+  submitButtonColor?: string;
+  /** Label of the final submit button; falls back to "Enviar respuestas". */
+  submitButtonText?: string;
 }
 
 export interface FormSettings {
@@ -71,6 +91,11 @@ export interface FormSettings {
   notifyEmailOnSubmit: boolean;
   notificationEmails: string[];
   closeDate?: string;
+  /** Customisation of the automatic e-mail field */
+  emailLabel?: string;
+  emailHelp?: string;
+  emailPlaceholder?: string;
+  emailPosition?: 'top' | 'bottom';
   maxTotalResponses?: number;
   department: string;
 }
@@ -143,4 +168,5 @@ export type ActiveScreen =
   | 'templates'
   | 'users'
   | 'settings'
+  | 'audit'
   | 'public_view';

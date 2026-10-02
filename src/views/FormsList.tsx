@@ -24,7 +24,8 @@ import {
   UserCheck
 } from 'lucide-react';
 import { Form, FormStatus } from '../types';
-import { formatDateSpanish } from '../utils/helpers';
+import { Pagination, usePagination } from '../components/Pagination';
+import { isQuestionField, formatDateSpanish } from '../utils/helpers';
 
 interface FormsListProps {
   forms: Form[];
@@ -111,6 +112,7 @@ export const FormsList: React.FC<FormsListProps> = ({
       return matchesSearch && matchesStatus && matchesDept;
     });
   }, [forms, searchQuery, statusFilter, departmentFilter]);
+  const pg = usePagination(filteredForms, `${searchQuery}|${statusFilter}|${departmentFilter}`);
 
   const getStatusBadge = (status: FormStatus) => {
     switch (status) {
@@ -348,7 +350,7 @@ export const FormsList: React.FC<FormsListProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {filteredForms.map((form) => (
+                {pg.pageItems.map((form) => (
                   <tr 
                     key={form.id} 
                     className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
@@ -380,7 +382,7 @@ export const FormsList: React.FC<FormsListProps> = ({
 
                     {/* Field count */}
                     <td className="py-3.5 px-4 text-center tabular-nums text-slate-600 font-mono">
-                      {form.fields.filter(f => f.type !== 'section').length}
+                      {form.fields.filter(isQuestionField).length}
                     </td>
 
                     {/* Responses */}
@@ -503,7 +505,7 @@ export const FormsList: React.FC<FormsListProps> = ({
       ) : (
         /* Grid / Card View */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredForms.map((form) => (
+          {pg.pageItems.map((form) => (
             <div
               key={form.id}
               onClick={() => onEditForm(form.id)}
@@ -574,6 +576,19 @@ export const FormsList: React.FC<FormsListProps> = ({
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {filteredForms.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200/80 shadow-xs">
+          <Pagination
+            page={pg.page}
+            pageSize={pg.pageSize}
+            total={pg.total}
+            onPageChange={pg.setPage}
+            onPageSizeChange={pg.setPageSize}
+            className="border-t-0"
+          />
         </div>
       )}
     </div>
