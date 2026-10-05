@@ -128,8 +128,15 @@ export function sameOriginOnly(allowedOrigin: string) {
     if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
     // Public form submissions are meant to be posted from the form page, which may live on another origin
     if (req.path.startsWith('/api/public/')) return next();
+    // Only a request carrying the session cookie is forgeable by another site (a browser attaches cookies
+    // automatically); a request authenticated with a Bearer header had to be built deliberately, so it is not
+    // a CSRF vector and does not need an Origin check.
+    const usesCookieAuth = !!readCookie(req, AUTH_COOKIE) && !req.header('Authorization');
+    if (!usesCookieAuth) return next();
+    // With cookie auth, a missing Origin is treated the same as a mismatched one: nothing here should accept
+    // it silently, since that is exactly the gap a forged cross-site request would rely on.
     const origin = req.headers.origin;
-    if (origin && origin !== allowedOrigin) return res.status(403).json({ message: 'Origen no permitido.' });
+    if (!origin || origin !== allowedOrigin) return res.status(403).json({ message: 'Origen no permitido.' });
     next();
   };
 }
@@ -164,6 +171,9 @@ export function createChallenge(): { question: string; token: string } {
 
 /** True when the answer matches the token, the token has not expired and has not been used before. */
 export function verifyChallenge(token: unknown, answer: unknown): boolean {
+  // Forget expired tokens on every call (not only after a success), so a stream of wrong answers cannot
+  // grow this map without bound.
+  for (const [key, expiresAt] of usedChallenges) if (expiresAt < Date.now()) usedChallenges.delete(key);
   if (typeof token !== 'string' || typeof answer !== 'string') return false;
   const [exp, nonce, signature] = token.split('.');
   if (!exp || !nonce || !signature || Number(exp) < Date.now() || usedChallenges.has(`${exp}.${nonce}`)) return false;
@@ -172,8 +182,6 @@ export function verifyChallenge(token: unknown, answer: unknown): boolean {
   const expected = sign(`${exp}.${nonce}.${answer.trim()}`);
   const a = Buffer.from(signature); const b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
-  // forget expired tokens so the map stays small
-  for (const [key, expiresAt] of usedChallenges) if (expiresAt < Date.now()) usedChallenges.delete(key);
   return true;
 }
 

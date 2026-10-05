@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { db } from './db.js';
@@ -16,6 +17,7 @@ export interface MfaPendingClaims {
   mfaPending: true;
   id: string;
   mode: 'verify' | 'setup';
+  jti: string;
 }
 
 declare global {
@@ -33,7 +35,21 @@ const secret = () => {
 export const createToken = (user: AuthUser) => jwt.sign(user, secret(), { expiresIn: '8h' });
 
 export const createMfaPendingToken = (id: string, mode: 'verify' | 'setup') =>
-  jwt.sign({ mfaPending: true, id, mode }, secret(), { expiresIn: '5m' });
+  // A random jti lets the server mark this specific token as spent once the code is accepted (see
+  // consumeMfaToken below), so a captured verify request cannot be replayed to mint a second session.
+  jwt.sign({ mfaPending: true, id, mode, jti: crypto.randomUUID() }, secret(), { expiresIn: '5m' });
+
+const usedMfaTokens = new Map<string, number>(); // jti -> expiry (ms epoch)
+const MFA_TOKEN_TTL_MS = 5 * 60_000 + 5_000; // slightly past the token's own 5m expiry
+
+/** True the first time this pending-MFA token is spent; false on any replay. Single-threaded Node makes this atomic. */
+export function consumeMfaToken(jti: string): boolean {
+  const now = Date.now();
+  for (const [key, expiresAt] of usedMfaTokens) if (expiresAt < now) usedMfaTokens.delete(key);
+  if (usedMfaTokens.has(jti)) return false;
+  usedMfaTokens.set(jti, now + MFA_TOKEN_TTL_MS);
+  return true;
+}
 
 /**
  * Authenticates a request from the HttpOnly session cookie (or a Bearer header for API clients) and re-checks the

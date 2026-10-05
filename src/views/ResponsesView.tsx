@@ -626,14 +626,22 @@ export const ResponsesView: React.FC<ResponsesViewProps> = ({
                             ))}
                           </ul>
                         ) : field.type === 'file_upload' && typeof answer === 'object' && 'dataUrl' in answer ? (
-                          <a
-                            href={(answer as any).dataUrl}
-                            download={(answer as any).name}
-                            className="inline-flex items-center gap-1.5 text-blue-700 hover:text-blue-900 font-semibold"
-                          >
-                            📎 {(answer as any).name}
-                            <span className="text-slate-400 font-normal">({(((answer as any).size || 0) / 1024).toFixed(0)} KB)</span>
-                          </a>
+                          // Defense in depth: the API already rejects an answer whose dataUrl is not a well-formed
+                          // "data:<allowed-mime>;base64,..." attachment, but a respondent-controlled value must
+                          // never reach an <a href> unchecked — anything else (e.g. a "javascript:" URI) would run
+                          // in this admin's session the moment they click what looks like a normal download link.
+                          /^data:[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/]+=*$/.test(String((answer as any).dataUrl)) ? (
+                            <a
+                              href={(answer as any).dataUrl}
+                              download={(answer as any).name}
+                              className="inline-flex items-center gap-1.5 text-blue-700 hover:text-blue-900 font-semibold"
+                            >
+                              📎 {(answer as any).name}
+                              <span className="text-slate-400 font-normal">({(((answer as any).size || 0) / 1024).toFixed(0)} KB)</span>
+                            </a>
+                          ) : (
+                            <span className="text-red-600 italic">Archivo adjunto inválido (no se muestra por seguridad).</span>
+                          )
                         ) : field.type === 'guatemala_location' && typeof answer === 'object' && 'department' in answer ? (
                           <span>{(answer as any).municipality}, {(answer as any).department}</span>
                         ) : typeof answer === 'object' ? (

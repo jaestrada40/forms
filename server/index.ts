@@ -5,7 +5,7 @@ import express from 'express';
 import { authenticator } from 'otplib';
 import QRCode from 'qrcode';
 import { z } from 'zod';
-import { createMfaPendingToken, createToken, requireAuth, requireMfaPendingToken, requireRoles } from './auth.js';
+import { consumeMfaToken, createMfaPendingToken, createToken, requireAuth, requireMfaPendingToken, requireRoles } from './auth.js';
 import { audit, db, getSetting, initializeDatabase, setSetting } from './db.js';
 import { encryptSecret, escapeHtml, getStoredSmtp, mailMode, mailSource, saveStoredSmtp, sendMail } from './mailer.js';
 import { readSecret } from './secrets.js';
@@ -157,6 +157,11 @@ app.post('/api/auth/mfa/activate', requireMfaPendingToken, async (req, res, next
       mfaFailures.fail(user.id);
       return res.status(401).json({ message: 'Código inválido.' });
     }
+    // A correct code only grants a session once per pending token: this stops a captured verify
+    // request (and the still-valid TOTP code inside it) from being replayed to mint a second session.
+    if (!consumeMfaToken(req.mfaPending!.jti)) {
+      return res.status(401).json({ message: 'Este código ya fue utilizado. Inicie sesión nuevamente.' });
+    }
     mfaFailures.succeed(user.id);
     await db.query('UPDATE users SET mfa_enabled = true, mfa_enabled_at = NOW() WHERE id = $1', [user.id]);
     const token = startSession(res, user);
@@ -177,6 +182,11 @@ app.post('/api/auth/mfa/verify', requireMfaPendingToken, async (req, res, next) 
     if (!authenticator.check(code, readSecret(user.mfa_secret))) {
       mfaFailures.fail(user.id);
       return res.status(401).json({ message: 'Código inválido.' });
+    }
+    // A correct code only grants a session once per pending token: this stops a captured verify
+    // request (and the still-valid TOTP code inside it) from being replayed to mint a second session.
+    if (!consumeMfaToken(req.mfaPending!.jti)) {
+      return res.status(401).json({ message: 'Este código ya fue utilizado. Inicie sesión nuevamente.' });
     }
     mfaFailures.succeed(user.id);
     const token = startSession(res, user);
@@ -273,7 +283,7 @@ const institutionSettingsSchema = z.object({
 });
 
 // Public: used by the login screen and the sidebar, no authentication required.
-app.get('/api/settings/branding', async (_req, res, next) => {
+app.get('/api/settings/branding', publicReadLimit, async (_req, res, next) => {
   try {
     const settings = await getSetting('institution', defaultInstitutionSettings);
     res.json({
@@ -583,7 +593,10 @@ app.delete('/api/report-schedules/:id', requireAuth, requireRoles(...REPORT_ROLE
   } catch (error) { next(error); }
 });
 
-app.post('/api/report-schedules/:id/send', requireAuth, requireRoles(...REPORT_ROLES), async (req, res, next) => {
+// A manual "send now" goes out to real external recipients, so it is capped per user regardless of role
+const scheduleSendLimit = rateLimit({ windowMs: 5 * 60_000, max: 3, key: req => `sched-send:${req.user?.id ?? req.ip}` });
+
+app.post('/api/report-schedules/:id/send', requireAuth, requireRoles(...REPORT_ROLES), scheduleSendLimit, async (req, res, next) => {
   try {
     const target = visibleSchedules(await getSchedules(), req.user!).find(s => s.id === req.params.id);
     if (!target) return res.status(404).json({ message: 'Programación no encontrada.' });
@@ -840,6 +853,37 @@ app.get('/api/public/forms/:id', publicReadLimit, async (req, res, next) => {
 
 app.get('/api/public/forms/:id/challenge', publicReadLimit, (_req, res) => res.json(createChallenge()));
 
+// Data URL MIME prefix allowed for each file extension the builder offers (server/index.ts:1357 in the frontend).
+// Anything outside this allowlist is rejected: a respondent-controlled answer is later rendered as an <a href>
+// download link in the admin panel (ResponsesView), so accepting an arbitrary scheme there (e.g. "javascript:")
+// would let a crafted submission run script in an administrator's session the moment they click the attachment.
+const FILE_UPLOAD_MIME: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
+/** Null when a `file_upload` answer is a well-formed attachment within this field's own rules; otherwise the error to show. */
+function validateFileUploadAnswer(value: unknown, fileConfig?: { allowedTypes?: string[]; maxMb?: number }): string | null {
+  if (value === undefined || value === null) return null; // the question was left unanswered
+  if (typeof value !== 'object' || Array.isArray(value)) return 'El archivo adjunto no tiene un formato válido.';
+  const { name, dataUrl } = value as { name?: unknown; dataUrl?: unknown };
+  if (typeof name !== 'string' || !name.trim() || name.length > 255) return 'El nombre del archivo adjunto no es válido.';
+  if (typeof dataUrl !== 'string') return 'El archivo adjunto no tiene un formato válido.';
+  const allowedTypes = fileConfig?.allowedTypes?.length ? fileConfig.allowedTypes : ['pdf', 'png', 'jpg'];
+  const allowedMimes = allowedTypes.map(t => FILE_UPLOAD_MIME[t]).filter((m): m is string => !!m);
+  const match = /^data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/]+=*)$/.exec(dataUrl);
+  if (!match || !allowedMimes.includes(match[1])) {
+    return `El archivo adjunto debe ser uno de estos formatos: ${allowedTypes.join(', ').toUpperCase()}.`;
+  }
+  const maxBytes = (fileConfig?.maxMb || 10) * 1024 * 1024;
+  if (Math.ceil((match[2].length * 3) / 4) > maxBytes) return `El archivo adjunto supera el máximo de ${fileConfig?.maxMb || 10} MB.`;
+  return null;
+}
+
 app.post('/api/public/forms/:id/responses', publicSubmitLimit, async (req, res, next) => {
   try {
     const payload = z.object({ answers: z.record(z.string(), z.unknown()), respondentEmail: z.string().email().optional(), respondentName: z.string().max(180).optional(), respondentDepartment: z.string().max(180).optional(), completionTimeSeconds: z.number().int().nonnegative().optional(), captchaToken: z.string().max(4000).optional(), captchaAnswer: z.string().max(20).optional(), website: z.string().max(200).optional() }).parse(req.body);
@@ -874,18 +918,30 @@ app.post('/api/public/forms/:id/responses', publicSubmitLimit, async (req, res, 
       return res.status(400).json({ message: 'Este formulario requiere un correo electrónico.' });
     }
     if (settings.limitOneResponsePerUser && payload.respondentEmail) {
-      const dup = await db.query('SELECT 1 FROM form_responses WHERE form_id = $1 AND lower(respondent_email) = lower($2) LIMIT 1', [req.params.id, payload.respondentEmail]);
+      // Compare ignoring a "+tag" in the local part (dup@x.com and dup+1@x.com land in the same inbox on
+      // Gmail, Outlook and most corporate mail systems), so "one response per person" cannot be bypassed by
+      // appending a tag to the same address.
+      const dup = await db.query(
+        "SELECT 1 FROM form_responses WHERE form_id = $1 AND regexp_replace(lower(respondent_email), '\\+[^@]*@', '@') = regexp_replace(lower($2), '\\+[^@]*@', '@') LIMIT 1",
+        [req.params.id, payload.respondentEmail],
+      );
       if (dup.rowCount) return res.status(409).json({ message: 'Ya existe una respuesta registrada con este correo electrónico.', code: 'duplicate_email' });
     }
     // Keep only answers to this form's real questions, with sane sizes (the endpoint is public)
-    const questionIds = new Set<string>(((form.rows[0].definition?.fields ?? []) as { id?: string; type?: string }[])
-      .filter(f => f.id && !['section', 'banner', 'image'].includes(String(f.type))).map(f => String(f.id)));
+    type QuestionField = { id?: string; type?: string; fileConfig?: { allowedTypes?: string[]; maxMb?: number } };
+    const questionFields = new Map<string, QuestionField>(((form.rows[0].definition?.fields ?? []) as QuestionField[])
+      .filter(f => f.id && !['section', 'banner', 'image'].includes(String(f.type))).map(f => [String(f.id), f]));
     const submitted = Object.entries(payload.answers);
     if (submitted.length > 300) return res.status(400).json({ message: 'Demasiadas respuestas en el envío.' });
     const answers: Record<string, unknown> = {};
     for (const [key, value] of submitted) {
-      if (!questionIds.has(key)) continue;
+      const field = questionFields.get(key);
+      if (!field) continue;
       if (JSON.stringify(value ?? null).length > 20_000) return res.status(400).json({ message: 'Una de las respuestas es demasiado larga.' });
+      if (field.type === 'file_upload') {
+        const fileError = validateFileUploadAnswer(value, field.fileConfig);
+        if (fileError) return res.status(400).json({ message: fileError });
+      }
       answers[key] = value;
     }
 
