@@ -28,9 +28,14 @@ spec:
       labels:
         app: portal-formularios-postgresql
     spec:
+      imagePullSecrets:
+        - name: srv-osnexus01.minfin.gob.gt
       containers:
         - name: postgresql
-          image: postgres:16-alpine
+          # No "postgres:16-alpine" directo: los nodos de este cluster no tienen salida a Docker Hub
+          # (por eso el resto de imágenes también se publican en OSNexus). Hay que espejar esta imagen
+          # ahí primero — ver instrucciones en el README.
+          image: srv-osnexus01.minfin.gob.gt:8006/postgres-16-alpine-img:latest
           ports:
             - containerPort: 5432
           env:

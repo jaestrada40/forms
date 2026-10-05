@@ -70,6 +70,20 @@ La siguiente etapa es reemplazar progresivamente los datos de muestra de la inte
 Sigue el esquema de `rededes-minfin`. El frontend (nginx no-root) sirve la SPA y hace proxy de `/api` y `/health` al Service `portal-formularios-backend`, así la API queda en el mismo origen (sin problemas de cookies/CORS) y la imagen no depende de ninguna URL en build.
 
 1. Publicar imágenes: `MakeImageBackend.bat` y `MakeImageFrontend.bat` (piden `docker login` al ejecutarse; usan `Dockerfile.backend` y `Dockerfile.frontend`).
-2. Copiar `openshift/01-secrets.example.yaml` a `openshift/01-secrets.yaml` (ignorado por git) y reemplazar los valores.
-3. Aplicar: `oc apply -f openshift/01-secrets.yaml` y luego los demás `openshift/0*.yaml`.
-4. Ajustar el host real en `07-frontend-route.yaml` y `WEB_ORIGIN` en `02-backend-configmap.yaml` (deben coincidir), y el `storageClassName` en `00-postgresql.yaml`.
+2. Espejar PostgreSQL en OSNexus: los nodos de este cluster no tienen salida a Docker Hub, así que `postgres:16-alpine` también tiene que pasar por OSNexus (el `ImagePullBackOff` en el pod de PostgreSQL es justamente esto).
+   ```powershell
+   docker pull postgres:16-alpine
+   docker tag postgres:16-alpine srv-osnexus01.minfin.gob.gt:8006/postgres-16-alpine-img:latest
+   docker login srv-osnexus01.minfin.gob.gt:8006
+   docker push srv-osnexus01.minfin.gob.gt:8006/postgres-16-alpine-img:latest
+   ```
+3. Crear el pull secret del registro (una sola vez por namespace) y enlazarlo a la cuenta de servicio por defecto:
+   ```bash
+   oc create secret docker-registry srv-osnexus01.minfin.gob.gt \
+     --docker-server=srv-osnexus01.minfin.gob.gt:8006 \
+     --docker-username=TU_USUARIO --docker-password=TU_PASSWORD
+   oc secrets link default srv-osnexus01.minfin.gob.gt --for=pull
+   ```
+4. Copiar `openshift/01-secrets.example.yaml` a `openshift/01-secrets.yaml` (ignorado por git) y reemplazar los valores.
+5. Ajustar el host real en `07-frontend-route.yaml` y `WEB_ORIGIN` en `02-backend-configmap.yaml` (deben coincidir), y el `storageClassName` en `00-postgresql.yaml` (confirmar con `oc get storageclass` cuál existe en el cluster — si el PVC se queda "unbound", es casi siempre porque este valor no existe).
+6. Aplicar: `oc apply -f openshift/01-secrets.yaml` y luego los demás `openshift/0*.yaml`.
