@@ -78,5 +78,20 @@ Sigue el esquema de `rededes-minfin`. El frontend (nginx no-root) sirve la SPA y
    oc secrets link default srv-osnexus01.minfin.gob.gt --for=pull
    ```
 3. Copiar `openshift/01-secrets.example.yaml` a `openshift/01-secrets.yaml` (ignorado por git) y reemplazar los valores.
-4. Ajustar el host real en `07-frontend-route.yaml` y `WEB_ORIGIN` en `02-backend-configmap.yaml` (deben coincidir), y el `storageClassName` en `00-postgresql.yaml` (confirmar con `oc get storageclass` cuál existe en el cluster — si el PVC se queda "unbound", es casi siempre porque este valor no existe).
-5. Aplicar: `oc apply -f openshift/01-secrets.yaml` y luego los demás `openshift/0*.yaml`.
+4. Confirmar el `storageClassName` en `00-postgresql.yaml` con `oc get storageclass` (si el PVC se queda "unbound", es casi siempre porque este valor no existe en el cluster).
+5. Aplicar en este orden — el Route va antes que el ConfigMap porque `WEB_ORIGIN` depende de lo que genere el Route:
+   ```bash
+   oc apply -f openshift/01-secrets.yaml
+   oc apply -f openshift/00-postgresql.yaml
+   oc apply -f openshift/07-frontend-route.yaml
+   oc apply -f openshift/05-frontend-deployment.yaml -f openshift/06-frontend-service.yaml
+   ```
+6. `07-frontend-route.yaml` no fija un host: cada cluster (OKD4, OCP4, el que sea) asigna su propio dominio wildcard. Leer el host real que quedó asignado:
+   ```bash
+   oc get route portal-formularios-frontend -o jsonpath="{.spec.host}"
+   ```
+7. Poner ese host exacto en `WEB_ORIGIN` de `02-backend-configmap.yaml` (con `https://`, sin `/` final) y aplicar el resto:
+   ```bash
+   oc apply -f openshift/02-backend-configmap.yaml
+   oc apply -f openshift/03-backend-deployment.yaml -f openshift/04-backend-service.yaml
+   ```
