@@ -8,7 +8,7 @@ spec:
   # Sin "host:" fijo: OpenShift/OKD asigna el hostname según el dominio wildcard real de ESTE cluster
   # (distinto en cada instalación). Después de aplicar, leer el host real asignado con:
   #   oc get route portal-formularios-frontend -o jsonpath="{.spec.host}"
-  # y poner ese valor exacto en WEB_ORIGIN (02-backend-configmap.yaml).
+  # y poner ese valor exacto en WEB_ORIGIN (06-backend-configmap.yaml).
   to:
     kind: Service
     name: portal-formularios-frontend

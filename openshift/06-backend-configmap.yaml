@@ -10,7 +10,7 @@ data:
   # Numero de proxies delante de la API (router de OpenShift + nginx del frontend).
   TRUST_PROXY: "2"
   # Origen exacto (protocolo + host, sin slash final) del frontend. El host lo asigna OpenShift/OKD al
-  # crear el Route (07-frontend-route.yaml no fija uno): aplique el Route primero, lea el host real con
+  # crear el Route (05-frontend-route.yaml no fija uno): aplique el Route primero, lea el host real con
   #   oc get route portal-formularios-frontend -o jsonpath="{.spec.host}"
   # y reemplace el valor de abajo con ese (manteniendo "https://" y sin "/" final). Después reaplique
   # este ConfigMap y reinicie el backend: oc rollout restart deployment/portal-formularios-backend

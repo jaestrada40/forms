@@ -69,29 +69,37 @@ La siguiente etapa es reemplazar progresivamente los datos de muestra de la inte
 
 Sigue el esquema de `rededes-minfin`. El frontend (nginx no-root) sirve la SPA y hace proxy de `/api` y `/health` al Service `portal-formularios-backend`, así la API queda en el mismo origen (sin problemas de cookies/CORS) y la imagen no depende de ninguna URL en build.
 
-1. Publicar imágenes: `MakeImageBackend.bat` y `MakeImageFrontend.bat` (piden `docker login` al ejecutarse; usan `Dockerfile.backend` y `Dockerfile.frontend`). `postgres:16-alpine` se jala directo de Docker Hub, sin pasar por OSNexus (igual que en `enlaces-minfin` y `rededes-minfin`).
-2. Crear el pull secret del registro (una sola vez por namespace) y enlazarlo a la cuenta de servicio por defecto — lo necesitan las imágenes de `backend` y `frontend`, que sí están en OSNexus:
-   ```bash
-   oc create secret docker-registry srv-osnexus01.minfin.gob.gt \
-     --docker-server=srv-osnexus01.minfin.gob.gt:8006 \
-     --docker-username=TU_USUARIO --docker-password=TU_PASSWORD
-   oc secrets link default srv-osnexus01.minfin.gob.gt --for=pull
-   ```
-3. Copiar `openshift/01-secrets.example.yaml` a `openshift/01-secrets.yaml` (ignorado por git) y reemplazar los valores.
-4. Confirmar el `storageClassName` en `00-postgresql.yaml` con `oc get storageclass` (si el PVC se queda "unbound", es casi siempre porque este valor no existe en el cluster).
-5. Aplicar en este orden — el Route va antes que el ConfigMap porque `WEB_ORIGIN` depende de lo que genere el Route:
-   ```bash
-   oc apply -f openshift/01-secrets.yaml
-   oc apply -f openshift/00-postgresql.yaml
-   oc apply -f openshift/07-frontend-route.yaml
-   oc apply -f openshift/05-frontend-deployment.yaml -f openshift/06-frontend-service.yaml
-   ```
-6. `07-frontend-route.yaml` no fija un host: cada cluster (OKD4, OCP4, el que sea) asigna su propio dominio wildcard. Leer el host real que quedó asignado:
-   ```bash
-   oc get route portal-formularios-frontend -o jsonpath="{.spec.host}"
-   ```
-7. Poner ese host exacto en `WEB_ORIGIN` de `02-backend-configmap.yaml` (con `https://`, sin `/` final) y aplicar el resto:
-   ```bash
-   oc apply -f openshift/02-backend-configmap.yaml
-   oc apply -f openshift/03-backend-deployment.yaml -f openshift/04-backend-service.yaml
-   ```
+Antes de aplicar ningún `openshift/*.yaml`:
+
+- Publicar imágenes: `MakeImageBackend.bat` y `MakeImageFrontend.bat` (piden `docker login` al ejecutarse; usan `Dockerfile.backend` y `Dockerfile.frontend`). `postgres:16-alpine` se jala directo de Docker Hub, sin pasar por OSNexus (igual que en `enlaces-minfin` y `rededes-minfin`).
+- Crear el pull secret del registro (una sola vez por namespace) y enlazarlo a la cuenta de servicio por defecto — lo necesitan las imágenes de `backend` y `frontend`, que sí están en OSNexus:
+  ```bash
+  oc create secret docker-registry srv-osnexus01.minfin.gob.gt \
+    --docker-server=srv-osnexus01.minfin.gob.gt:8006 \
+    --docker-username=TU_USUARIO --docker-password=TU_PASSWORD
+  oc secrets link default srv-osnexus01.minfin.gob.gt --for=pull
+  ```
+- Copiar `openshift/01-secrets.example.yaml` a `openshift/01-secrets.yaml` (ignorado por git) y reemplazar los valores.
+- Confirmar el `storageClassName` en `02-postgresql.yaml` con `oc get storageclass` (si el PVC se queda "unbound", es casi siempre porque este valor no existe en el cluster).
+
+Los archivos de `openshift/` están numerados en el orden real en que se aplican — correr `oc apply -f` en ese mismo orden, deteniéndose entre el `05` y el `06` para editar `WEB_ORIGIN`:
+
+```bash
+oc apply -f openshift/01-secrets.yaml
+oc apply -f openshift/02-postgresql.yaml
+oc apply -f openshift/03-frontend-deployment.yaml
+oc apply -f openshift/04-frontend-service.yaml
+oc apply -f openshift/05-frontend-route.yaml
+```
+
+`05-frontend-route.yaml` no fija un host: cada cluster (OKD4, OCP4, el que sea) asigna su propio dominio wildcard. Leer el host real que quedó asignado:
+```bash
+oc get route portal-formularios-frontend -o jsonpath="{.spec.host}"
+```
+
+Poner ese host exacto en `WEB_ORIGIN` de `06-backend-configmap.yaml` (con `https://`, sin `/` final) y seguir con el resto:
+```bash
+oc apply -f openshift/06-backend-configmap.yaml
+oc apply -f openshift/07-backend-deployment.yaml
+oc apply -f openshift/08-backend-service.yaml
+```
