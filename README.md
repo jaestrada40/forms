@@ -67,7 +67,7 @@ La siguiente etapa es reemplazar progresivamente los datos de muestra de la inte
 
 ## Despliegue en OpenShift (imágenes en OSNexus)
 
-Sigue el esquema de `rededes-minfin`. El frontend (nginx no-root) sirve la SPA y hace proxy de `/api` y `/health` al Service `portales-formularios-backend`, así la API queda en el mismo origen (sin problemas de cookies/CORS) y la imagen no depende de ninguna URL en build.
+Sigue el esquema de `rededes-minfin`. El frontend (nginx no-root) sirve la SPA y hace proxy de `/api` y `/health` al Service `portal-formularios-backend`, así la API queda en el mismo origen (sin problemas de cookies/CORS) y la imagen no depende de ninguna URL en build.
 
 1. Publicar imágenes: `MakeImageBackend.bat` y `MakeImageFrontend.bat` (piden `docker login` al ejecutarse; usan `Dockerfile.backend` y `Dockerfile.frontend`).
 2. Copiar `openshift/01-secrets.example.yaml` a `openshift/01-secrets.yaml` (ignorado por git) y reemplazar los valores.

@@ -2,7 +2,7 @@
 setlocal
 
 set "REGISTRY=srv-osnexus01.minfin.gob.gt:8006"
-set "IMAGE=%REGISTRY%/portales-formularios-frontend-img:latest"
+set "IMAGE=%REGISTRY%/portal-formularios-frontend-img:latest"
 
 REM Authenticate interactively. Do not store registry credentials in this file.
 docker login %REGISTRY%

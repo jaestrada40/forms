@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: portales-formularios-backend-config
+  name: portal-formularios-backend-config
   labels:
-    app: portales-formularios-backend
+    app: portal-formularios-backend
 data:
   NODE_ENV: "production"
   API_PORT: "4000"
   # Numero de proxies delante de la API (router de OpenShift + nginx del frontend).
   TRUST_PROXY: "2"
   # Origen exacto (protocolo + host, sin slash final) del frontend.
-  WEB_ORIGIN: "https://portales-formularios.apps.ocp4.mfpweb.local"
+  WEB_ORIGIN: "https://portal-formularios.apps.ocp4.mfpweb.local"

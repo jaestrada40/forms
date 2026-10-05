@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: portales-formularios-backend
+  name: portal-formularios-backend
   labels:
-    app: portales-formularios-backend
+    app: portal-formularios-backend
 spec:
   selector:
-    app: portales-formularios-backend
+    app: portal-formularios-backend
   ports:
     - name: http
       port: 4000

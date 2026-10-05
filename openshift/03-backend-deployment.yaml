@@ -1,33 +1,33 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: portales-formularios-backend
+  name: portal-formularios-backend
   labels:
-    app: portales-formularios-backend
+    app: portal-formularios-backend
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: portales-formularios-backend
+      app: portal-formularios-backend
   template:
     metadata:
       labels:
-        app: portales-formularios-backend
+        app: portal-formularios-backend
     spec:
       imagePullSecrets:
         - name: srv-osnexus01.minfin.gob.gt
       containers:
         - name: backend
-          image: srv-osnexus01.minfin.gob.gt:8006/portales-formularios-backend-img:latest
+          image: srv-osnexus01.minfin.gob.gt:8006/portal-formularios-backend-img:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 4000
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: portales-formularios-backend-config
+                name: portal-formularios-backend-config
             - secretRef:
-                name: portales-formularios-backend-secrets
+                name: portal-formularios-backend-secrets
           readinessProbe:
             httpGet:
               path: /health
