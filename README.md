@@ -23,7 +23,7 @@ Aplicación para crear formularios, recibir respuestas y consultar reportes. La 
    Abra `.env.local` y reemplace todas las claves de ejemplo, especialmente `POSTGRES_PASSWORD`, `DATABASE_URL` (debe usar la misma contraseña que `POSTGRES_PASSWORD`), `JWT_SECRET` (mínimo 32 caracteres aleatorios) y `ADMIN_PASSWORD`. Este archivo no se sube al repositorio.
 4. Levante PostgreSQL con Docker:
    ```bash
-   docker compose up -d postgres
+   docker compose --env-file .env.local up -d postgres
    ```
    Esto crea el contenedor `formularios-postgres` con un volumen persistente (`postgres_data`), así que sus datos no se pierden al apagar el contenedor. Puede verificar que esté sano con `docker compose ps`.
 5. En una terminal, inicie la API (se reinicia sola al guardar cambios en `server/`):
@@ -64,3 +64,12 @@ Aplicación para crear formularios, recibir respuestas y consultar reportes. La 
 - `GET /health`: verificación del servicio.
 
 La siguiente etapa es reemplazar progresivamente los datos de muestra de la interfaz por `src/services/api.ts`, comenzando con el listado, creación y edición de formularios.
+
+## Despliegue en OpenShift (imágenes en OSNexus)
+
+Sigue el esquema de `rededes-minfin`. El frontend (nginx no-root) sirve la SPA y hace proxy de `/api` y `/health` al Service `portales-formularios-backend`, así la API queda en el mismo origen (sin problemas de cookies/CORS) y la imagen no depende de ninguna URL en build.
+
+1. Publicar imágenes: `MakeImageBackend.bat` y `MakeImageFrontend.bat` (piden `docker login` al ejecutarse; usan `Dockerfile.backend` y `Dockerfile.frontend`).
+2. Copiar `openshift/01-secrets.example.yaml` a `openshift/01-secrets.yaml` (ignorado por git) y reemplazar los valores.
+3. Aplicar: `oc apply -f openshift/01-secrets.yaml` y luego los demás `openshift/0*.yaml`.
+4. Ajustar el host real en `07-frontend-route.yaml` y `WEB_ORIGIN` en `02-backend-configmap.yaml` (deben coincidir), y el `storageClassName` en `00-postgresql.yaml`.

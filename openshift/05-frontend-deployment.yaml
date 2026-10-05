@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portales-formularios-frontend
+  labels:
+    app: portales-formularios-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portales-formularios-frontend
+  template:
+    metadata:
+      labels:
+        app: portales-formularios-frontend
+    spec:
+      imagePullSecrets:
+        - name: srv-osnexus01.minfin.gob.gt
+      containers:
+        - name: frontend
+          # nginx.conf hace proxy_pass a portales-formularios-backend:4000 (Service interno),
+          # asi que la imagen no depende de ningun build-arg por entorno.
+          image: srv-osnexus01.minfin.gob.gt:8006/portales-formularios-frontend-img:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

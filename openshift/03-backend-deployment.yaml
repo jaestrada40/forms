@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portales-formularios-backend
+  labels:
+    app: portales-formularios-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: portales-formularios-backend
+  template:
+    metadata:
+      labels:
+        app: portales-formularios-backend
+    spec:
+      imagePullSecrets:
+        - name: srv-osnexus01.minfin.gob.gt
+      containers:
+        - name: backend
+          image: srv-osnexus01.minfin.gob.gt:8006/portales-formularios-backend-img:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: portales-formularios-backend-config
+            - secretRef:
+                name: portales-formularios-backend-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

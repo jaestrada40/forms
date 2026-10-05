@@ -9,3 +9,7 @@ coverage/
 .claude/
 
 .playwright-mcp/
+
+# Secretos de OpenShift (usar openshift/01-secrets.example.yaml como plantilla)
+openshift/*secret*.yaml
+!openshift/*secret*.example.yaml

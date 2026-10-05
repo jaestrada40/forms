@@ -1,0 +1,18 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: portales-formularios-frontend
+  labels:
+    app: portales-formularios-frontend
+spec:
+  # Este host debe coincidir con WEB_ORIGIN en 02-backend-configmap.yaml.
+  host: portales-formularios.apps.ocp4.mfpweb.local
+  to:
+    kind: Service
+    name: portales-formularios-frontend
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

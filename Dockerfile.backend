@@ -1,0 +1,12 @@
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package*.json ./
+# tsx (devDependency) ejecuta el TypeScript del servidor directamente
+RUN npm ci --include=dev && npm cache clean --force
+COPY tsconfig.server.json ./
+COPY server ./server
+RUN chown -R node:root /app && chmod -R g=u /app
+USER node
+EXPOSE 4000
+CMD ["npx", "tsx", "server/index.ts"]
