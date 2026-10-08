@@ -6,7 +6,8 @@ import {
   CheckCircle2, 
   Clock, 
   Archive, 
-  MoreVertical, 
+  MoreVertical,
+  ChevronDown,
   ExternalLink, 
   Copy, 
   LayoutTemplate,
@@ -68,9 +69,10 @@ export const FormsList: React.FC<FormsListProps> = ({
       return;
     }
     const rect = anchor.getBoundingClientRect();
-    const MENU_WIDTH = 176;
+    const MENU_WIDTH = 232;
+    const MENU_HEIGHT = 360;
     setDropdownPosition({
-      top: rect.bottom + 4,
+      top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - MENU_HEIGHT)),
       left: Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8),
     });
     setActiveDropdownId(formId);
@@ -408,55 +410,73 @@ export const FormsList: React.FC<FormsListProps> = ({
                       {formatDateSpanish(form.updatedAt)}
                     </td>
 
-                    {/* Action buttons */}
+                    {/* Action menu: labels stay visible and the portal prevents clipping in narrow viewports. */}
                     <td className="py-3.5 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => onEditForm(form.id)}
-                          className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-slate-100 rounded-md transition-colors"
-                          title="Editar en constructor"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </button>
-
-                        <button
-                          onClick={() => onViewResponses(form.id)}
-                          className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-slate-100 rounded-md transition-colors"
-                          title="Ver respuestas y reportes"
-                        >
-                          <Inbox className="w-4 h-4" />
-                        </button>
-
-                        <button
-                          onClick={() => onShowPublicView(form.id)}
-                          className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-slate-100 rounded-md transition-colors"
-                          title="Abrir vista pública de respuesta"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                        </button>
-
-                        {/* Dropdown Menu */}
+                      <div className="flex justify-end">
                         <div className="relative">
                           <button
                             onClick={(e) => openDropdown(form.id, e.currentTarget)}
-                            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 rounded-lg transition-colors"
+                            aria-haspopup="menu"
+                            aria-expanded={activeDropdownId === form.id}
                           >
-                            <MoreVertical className="w-4 h-4" />
+                            <MoreVertical className="w-4 h-4" aria-hidden="true" />
+                            Acciones
+                            <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />
                           </button>
 
                           {activeDropdownId === form.id && dropdownPosition && createPortal(
                             <>
                               <div className="fixed inset-0 z-40" onClick={closeDropdown} />
                               <div
-                                className="fixed w-44 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-1 text-left"
+                                className="fixed w-[232px] max-h-[calc(100vh-16px)] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-1.5 text-left"
                                 style={{ top: dropdownPosition.top, left: dropdownPosition.left }}
+                                role="menu"
+                                aria-label={`Acciones para ${form.title}`}
                               >
+                                <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Acciones principales</div>
+                                <button
+                                  onClick={() => {
+                                    closeDropdown();
+                                    onEditForm(form.id);
+                                  }}
+                                  className="w-full px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-800 rounded-lg flex items-center gap-2"
+                                  role="menuitem"
+                                >
+                                  <Edit3 className="w-4 h-4 text-blue-600" />
+                                  Editar formulario
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    closeDropdown();
+                                    onViewResponses(form.id);
+                                  }}
+                                  className="w-full px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 rounded-lg flex items-center gap-2"
+                                  role="menuitem"
+                                >
+                                  <Inbox className="w-4 h-4 text-emerald-600" />
+                                  Ver respuestas y reportes
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    closeDropdown();
+                                    onShowPublicView(form.id);
+                                  }}
+                                  className="w-full px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-800 rounded-lg flex items-center gap-2"
+                                  role="menuitem"
+                                >
+                                  <ExternalLink className="w-4 h-4 text-blue-600" />
+                                  Abrir vista pública
+                                </button>
+                                <div className="border-t border-slate-100 my-1.5" />
+                                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Administración</div>
                                 <button
                                   onClick={() => {
                                     closeDropdown();
                                     onOpenShareModal(form);
                                   }}
-                                  className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                  className="w-full px-2.5 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                  role="menuitem"
                                 >
                                   <Share2 className="w-3.5 h-3.5 text-blue-600" />
                                   Compartir enlace
@@ -466,7 +486,8 @@ export const FormsList: React.FC<FormsListProps> = ({
                                     closeDropdown();
                                     onOpenPublishModal(form);
                                   }}
-                                  className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                  className="w-full px-2.5 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                  role="menuitem"
                                 >
                                   <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
                                   Cambiar estado
@@ -476,7 +497,8 @@ export const FormsList: React.FC<FormsListProps> = ({
                                     closeDropdown();
                                     onOpenDuplicateModal(form);
                                   }}
-                                  className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                  className="w-full px-2.5 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                  role="menuitem"
                                 >
                                   <Copy className="w-3.5 h-3.5 text-slate-500" />
                                   Duplicar
@@ -486,7 +508,8 @@ export const FormsList: React.FC<FormsListProps> = ({
                                     closeDropdown();
                                     onSaveAsTemplate(form);
                                   }}
-                                  className="w-full px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                  className="w-full px-2.5 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                  role="menuitem"
                                 >
                                   <LayoutTemplate className="w-3.5 h-3.5 text-slate-500" />
                                   Guardar como plantilla
@@ -497,7 +520,8 @@ export const FormsList: React.FC<FormsListProps> = ({
                                     closeDropdown();
                                     onOpenDeleteModal(form);
                                   }}
-                                  className="w-full px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-2 font-medium"
+                                  className="w-full px-2.5 py-2 text-xs text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-2 font-medium"
+                                  role="menuitem"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                   Eliminar formulario
@@ -562,27 +586,27 @@ export const FormsList: React.FC<FormsListProps> = ({
                     Ver respuestas →
                   </button>
 
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap justify-end gap-1.5">
                     <button
                       onClick={() => onShowPublicView(form.id)}
-                      className="p-1.5 text-slate-400 hover:text-blue-700 rounded-md"
-                      title="Vista pública"
+                      className="inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors"
                     >
-                      <ExternalLink className="w-4 h-4" />
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      Vista pública
                     </button>
                     <button
                       onClick={() => onOpenShareModal(form)}
-                      className="p-1.5 text-slate-400 hover:text-blue-700 rounded-md"
-                      title="Compartir"
+                      className="inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors"
                     >
-                      <Share2 className="w-4 h-4" />
+                      <Share2 className="w-3.5 h-3.5" />
+                      Compartir
                     </button>
                     <button
                       onClick={() => onOpenDeleteModal(form)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded-md"
-                      title="Eliminar"
+                      className="inline-flex items-center gap-1 px-2 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-rose-700 hover:bg-rose-50 rounded-md transition-colors"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Eliminar
                     </button>
                   </div>
                 </div>

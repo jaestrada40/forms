@@ -314,7 +314,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoggedIn }) => {
                 <KeyRound className="w-6 h-6 text-white" />
               </div>
               <h1 className="text-lg font-semibold text-slate-900">Configure la verificación en dos pasos</h1>
-              <p className="text-sm text-slate-500 text-center">Esta institución exige doble factor de autenticación. Escanee el código con Google Authenticator, Authy u otra app TOTP.</p>
+              <p className="text-sm text-slate-500 text-center">Esta institución exige doble factor de autenticación.</p>
             </div>
             <div className="flex justify-center mb-4">
               <img src={mfaSetup.qrDataUrl} alt="Código QR de verificación en dos pasos" className="w-44 h-44 rounded-lg border border-slate-200" />

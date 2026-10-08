@@ -1,21 +1,19 @@
 import React, { useState } from 'react';
-import { createPortal } from 'react-dom';
 import {
   Users2,
   UserPlus,
   Shield,
   ShieldCheck,
   ShieldOff,
-  Check,
   Clock,
-  MoreVertical,
   Mail,
   Search,
   AlertCircle,
   FileCheck2,
-  Lock,
   RotateCcw,
-  Pencil
+  Pencil,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { Pagination, usePagination } from '../components/Pagination';
 import { ModalWrapper } from '../components/Modals';
@@ -32,6 +30,13 @@ interface UsersViewProps {
   showToast: (msg: string, type?: 'success' | 'info' | 'error') => void;
 }
 
+const roleOptions: Array<{ role: UserRole; description: string }> = [
+  { role: 'Administrador', description: 'Gestiona usuarios, configuración, auditoría y todos los formularios.' },
+  { role: 'Creador', description: 'Crea, edita y publica sus propios formularios.' },
+  { role: 'Analista', description: 'Consulta respuestas, métricas y exporta reportes.' },
+  { role: 'Respondedor', description: 'Completa formularios y consulta los folios que le correspondan.' },
+];
+
 export const UsersView: React.FC<UsersViewProps> = ({
   users,
   onOpenInviteModal,
@@ -42,34 +47,12 @@ export const UsersView: React.FC<UsersViewProps> = ({
   departments,
   showToast
 }) => {
-  const [passwordUser, setPasswordUser] = useState<UserAccount | null>(null);
-  const [newPassword, setNewPassword] = useState('');
-  const [editUser, setEditUser] = useState<UserAccount | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', email: '', department: '' });
+  const [actionUser, setActionUser] = useState<UserAccount | null>(null);
+  const [pendingRole, setPendingRole] = useState<UserRole | null>(null);
+  const [actionForm, setActionForm] = useState({ name: '', email: '', department: '', password: '' });
+  const [showActionPassword, setShowActionPassword] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
-  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
-
-  const openMenu = (userId: string, anchor: HTMLElement) => {
-    if (activeMenuId === userId) {
-      setActiveMenuId(null);
-      setMenuPosition(null);
-      return;
-    }
-    const rect = anchor.getBoundingClientRect();
-    const MENU_WIDTH = 224;
-    setMenuPosition({
-      top: rect.bottom + 4,
-      left: Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8),
-    });
-    setActiveMenuId(userId);
-  };
-
-  const closeMenu = () => {
-    setActiveMenuId(null);
-    setMenuPosition(null);
-  };
 
   const filteredUsers = users.filter(u => {
     const matchesSearch = !searchQuery ||
@@ -80,6 +63,20 @@ export const UsersView: React.FC<UsersViewProps> = ({
     return matchesSearch && matchesRole;
   });
   const pg = usePagination(filteredUsers, `${searchQuery}|${roleFilter}`);
+
+  const closeActionModal = () => {
+    setActionUser(null);
+    setPendingRole(null);
+    setActionForm({ name: '', email: '', department: '', password: '' });
+    setShowActionPassword(false);
+  };
+
+  const openActionModal = (user: UserAccount) => {
+    setActionUser(user);
+    setPendingRole(user.role);
+    setActionForm({ name: user.name, email: user.email, department: user.department, password: '' });
+    setShowActionPassword(false);
+  };
 
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
@@ -123,85 +120,69 @@ export const UsersView: React.FC<UsersViewProps> = ({
   return (
     <div className="space-y-6">
       <ModalWrapper
-        isOpen={!!passwordUser}
-        onClose={() => setPasswordUser(null)}
-        title={`Cambiar contraseña${passwordUser ? ` · ${passwordUser.name}` : ''}`}
+        isOpen={!!actionUser}
+        onClose={closeActionModal}
+        title={`Gestionar usuario${actionUser ? ` · ${actionUser.name}` : ''}`}
       >
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!passwordUser || newPassword.length < 8) return;
-            await onChangeUserPassword(passwordUser.id, newPassword);
-            setPasswordUser(null);
-            setNewPassword('');
-          }}
-          className="space-y-4"
-        >
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-              Nueva contraseña
-            </label>
-            <input
-              type="text"
-              required
-              minLength={8}
-              autoComplete="off"
-              placeholder="Mínimo 8 caracteres"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
-            />
-          </div>
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-            <button type="button" onClick={() => setPasswordUser(null)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg">
-              Cancelar
-            </button>
-            <button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg">
-              Guardar contraseña
-            </button>
-          </div>
-        </form>
-      </ModalWrapper>
+        {actionUser && (
+          <form
+            className="space-y-5"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const detailsChanged = actionForm.name !== actionUser.name || actionForm.email !== actionUser.email || actionForm.department !== actionUser.department;
+              if (detailsChanged) await onEditUser(actionUser.id, { name: actionForm.name, email: actionForm.email, department: actionForm.department });
+              if (pendingRole && pendingRole !== actionUser.role) onUpdateUserRole(actionUser.id, pendingRole);
+              if (actionForm.password) await onChangeUserPassword(actionUser.id, actionForm.password);
+              showToast('Cambios del usuario guardados correctamente.', 'success');
+              closeActionModal();
+            }}
+          >
+            <section className="space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">Datos del usuario</h4>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="managed-user-name">Nombre</label>
+                <input id="managed-user-name" required value={actionForm.name} onChange={(event) => setActionForm(current => ({ ...current, name: event.target.value }))} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="managed-user-email">Correo</label>
+                <input id="managed-user-email" type="email" required value={actionForm.email} onChange={(event) => setActionForm(current => ({ ...current, email: event.target.value }))} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="managed-user-department">Departamento</label>
+                <select id="managed-user-department" value={actionForm.department} onChange={(event) => setActionForm(current => ({ ...current, department: event.target.value }))} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-600">
+                  {[...new Set([actionForm.department, ...departments])].filter(Boolean).map(department => <option key={department} value={department}>{department}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" htmlFor="managed-user-password">Nueva contraseña <span className="font-normal text-slate-400">(opcional)</span></label>
+                <div className="relative">
+                  <input id="managed-user-password" type={showActionPassword ? 'text' : 'password'} minLength={8} autoComplete="new-password" placeholder="Deje vacío para conservar la actual" value={actionForm.password} onChange={(event) => setActionForm(current => ({ ...current, password: event.target.value }))} className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-10 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-600" />
+                  <button type="button" onClick={() => setShowActionPassword(current => !current)} className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-700" aria-label={showActionPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}>
+                    {showActionPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            </section>
 
-      <ModalWrapper isOpen={!!editUser} onClose={() => setEditUser(null)} title="Editar usuario">
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!editUser) return;
-            await onEditUser(editUser.id, editForm);
-            setEditUser(null);
-          }}
-          className="space-y-4"
-        >
-          {([['Nombre completo', 'name', 'text'], ['Correo electrónico', 'email', 'email']] as const).map(([label, key, type]) => (
-            <div key={key}>
-              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">{label}</label>
-              <input
-                type={type}
-                required
-                value={editForm[key]}
-                onChange={(e) => setEditForm(prev => ({ ...prev, [key]: e.target.value }))}
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
-              />
+            <section className="border-t border-slate-100 pt-4">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Rol y permisos</h4>
+              <label className="sr-only" htmlFor="managed-user-role">Rol asignado</label>
+              <select id="managed-user-role" value={pendingRole ?? ''} onChange={(event) => setPendingRole(event.target.value as UserRole)} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-600">
+                {roleOptions.map(({ role }) => <option key={role} value={role}>{role}</option>)}
+              </select>
+              <p className="mt-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+                {roleOptions.find(({ role }) => role === pendingRole)?.description}
+              </p>
+            </section>
+
+            {actionUser.mfaEnabled && <button type="button" onClick={() => { onResetUserMfa(actionUser.id); closeActionModal(); }} className="w-full flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-800 hover:bg-amber-100"><RotateCcw className="w-4 h-4" />Restablecer MFA</button>}
+
+            <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
+              <button type="button" onClick={closeActionModal} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
+              <button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg">Guardar cambios</button>
             </div>
-          ))}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Departamento</label>
-            <select
-              value={editForm.department}
-              onChange={(e) => setEditForm(prev => ({ ...prev, department: e.target.value }))}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
-            >
-              {[...new Set([editForm.department, ...departments])].filter(Boolean).map(d => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-            <button type="button" onClick={() => setEditUser(null)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
-            <button type="submit" className="px-4 py-2 text-sm font-medium text-white bg-blue-700 hover:bg-blue-800 rounded-lg">Guardar cambios</button>
-          </div>
-        </form>
+          </form>
+        )}
       </ModalWrapper>
 
       {/* Top Header */}
@@ -351,76 +332,14 @@ export const UsersView: React.FC<UsersViewProps> = ({
 
                   <td className="py-3.5 px-4 text-right whitespace-nowrap relative">
                     <button
-                      onClick={(e) => openMenu(user.id, e.currentTarget)}
-                      className="p-1.5 text-slate-400 hover:text-slate-700 rounded-md"
+                      type="button"
+                      onClick={() => openActionModal(user)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 transition-colors"
+                      aria-haspopup="dialog"
                     >
-                      <MoreVertical className="w-4 h-4" />
+                      <Pencil className="w-3.5 h-3.5" />
+                      Gestionar
                     </button>
-
-                    {activeMenuId === user.id && menuPosition && createPortal(
-                      <>
-                        <div className="fixed inset-0 z-40" onClick={closeMenu} />
-                        <div
-                          className="fixed w-56 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-1 text-left"
-                          style={{ top: menuPosition.top, left: menuPosition.left }}
-                        >
-                          <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                            Cambiar Rol:
-                          </div>
-                          {(['Administrador', 'Creador', 'Analista', 'Respondedor'] as const).map(role => (
-                            <button
-                              key={role}
-                              onClick={() => {
-                                onUpdateUserRole(user.id, role);
-                                closeMenu();
-                                showToast(`Rol de ${user.name} actualizado a ${role}`, 'success');
-                              }}
-                              className="w-full px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50 rounded flex items-center justify-between"
-                            >
-                              <span>{role}</span>
-                              {user.role === role && <Check className="w-3 h-3 text-blue-700" />}
-                            </button>
-                          ))}
-                          <div className="border-t border-slate-100 my-1"></div>
-                          <button
-                            onClick={() => {
-                              closeMenu();
-                              setEditUser(user);
-                              setEditForm({ name: user.name, email: user.email, department: user.department });
-                            }}
-                            className="w-full px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50 rounded flex items-center gap-1.5"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                            Editar nombre, correo y departamento
-                          </button>
-                          <button
-                            onClick={() => {
-                              closeMenu();
-                              setPasswordUser(user);
-                              setNewPassword('');
-                            }}
-                            className="w-full px-2.5 py-1 text-xs text-blue-700 hover:bg-blue-50 rounded flex items-center gap-1.5"
-                          >
-                            <Lock className="w-3.5 h-3.5" />
-                            Cambiar contraseña
-                          </button>
-                          {user.mfaEnabled && (
-                            <button
-                              onClick={() => {
-                                closeMenu();
-                                onResetUserMfa(user.id);
-                              }}
-                              className="w-full px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-50 rounded flex items-center gap-1.5"
-                              title="Úselo si el usuario perdió su teléfono o no puede generar códigos"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5" />
-                              Restablecer MFA (perdió el teléfono)
-                            </button>
-                          )}
-                        </div>
-                      </>,
-                      document.body
-                    )}
                   </td>
                 </tr>
               ))}

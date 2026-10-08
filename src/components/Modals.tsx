@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import {
   X, Copy, Check, QrCode, Code2, Globe, Send, UserPlus,
-  Trash2, CopyPlus, Calendar, Mail, FileSpreadsheet, ArrowRight, PlusCircle, Download, Loader2
+  Trash2, CopyPlus, Calendar, Mail, FileSpreadsheet, ArrowRight, PlusCircle, Download, Loader2, Eye, EyeOff
 } from 'lucide-react';
 import { Form, UserRole } from '../types';
 import { api, ReportScheduleRow } from '../services/api';
@@ -25,12 +25,12 @@ export const ModalWrapper: React.FC<ModalWrapperProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs transition-opacity">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs transition-opacity">
       <div 
-        className={`relative w-full ${maxWidth} bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden transform transition-all animate-in fade-in duration-150`}
+        className={`relative my-auto flex max-h-[calc(100dvh-1.5rem)] w-full ${maxWidth} flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl transform transition-all animate-in fade-in duration-150 sm:max-h-[calc(100dvh-2rem)]`}
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-slate-50/50 px-4 py-3 sm:px-6 sm:py-4">
           <h3 className="font-semibold text-slate-900 text-base">{title}</h3>
           <button
             onClick={onClose}
@@ -39,7 +39,7 @@ export const ModalWrapper: React.FC<ModalWrapperProps> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-6">
+        <div className="min-h-0 overflow-y-auto p-4 sm:p-6">
           {children}
         </div>
       </div>
@@ -419,6 +419,7 @@ export const InviteUserModal: React.FC<{
   const [role, setRole] = useState<UserRole>('Creador');
   const [department, setDepartment] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -427,6 +428,7 @@ export const InviteUserModal: React.FC<{
     setName('');
     setEmail('');
     setPassword('');
+    setShowPassword(false);
     onClose();
   };
 
@@ -497,16 +499,27 @@ export const InviteUserModal: React.FC<{
           <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
             Contraseña inicial
           </label>
-          <input
-            type="text"
-            required
-            minLength={8}
-            autoComplete="off"
-            placeholder="Mínimo 8 caracteres"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
-          />
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              required
+              minLength={8}
+              autoComplete="new-password"
+              placeholder="Mínimo 8 caracteres"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-3 py-2 pr-10 text-sm bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-600"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(value => !value)}
+              className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-blue-600 rounded-r-lg"
+              aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              title={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+            >
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
           <p className="mt-1 text-[11px] text-slate-500">
             Comparta esta contraseña con el usuario; podrá cambiarla desde su perfil.
           </p>

@@ -82,24 +82,26 @@ Antes de aplicar ningún `openshift/*.yaml`:
 - Copiar `openshift/01-secrets.example.yaml` a `openshift/01-secrets.yaml` (ignorado por git) y reemplazar los valores.
 - Confirmar el `storageClassName` en `02-postgresql.yaml` con `oc get storageclass` (si el PVC se queda "unbound", es casi siempre porque este valor no existe en el cluster).
 
-Los archivos de `openshift/` están numerados en el orden real en que se aplican — correr `oc apply -f` en ese mismo orden, deteniéndose entre el `05` y el `06` para editar `WEB_ORIGIN`:
+No aplique todo el directorio con `oc apply -f openshift`: incluiría también la plantilla `01-secrets.example.yaml`. Aplique los archivos de forma explícita. El Service del backend debe existir antes que el Deployment del frontend; de otro modo nginx no puede resolver `portal-formularios-backend` y el frontend entra temporalmente en `CrashLoopBackOff`.
+
+Primero cree la base, el Service público del frontend y su Route; deténgase para definir `WEB_ORIGIN`:
 
 ```bash
 oc apply -f openshift/01-secrets.yaml
 oc apply -f openshift/02-postgresql.yaml
-oc apply -f openshift/03-frontend-deployment.yaml
-oc apply -f openshift/04-frontend-service.yaml
-oc apply -f openshift/05-frontend-route.yaml
+oc apply -f openshift/03-frontend-service.yaml
+oc apply -f openshift/04-frontend-route.yaml
 ```
 
-`05-frontend-route.yaml` no fija un host: cada cluster (OKD4, OCP4, el que sea) asigna su propio dominio wildcard. Leer el host real que quedó asignado:
+`04-frontend-route.yaml` no fija un host: cada cluster (OKD4, OCP4, el que sea) asigna su propio dominio wildcard. Leer el host real que quedó asignado:
 ```bash
 oc get route portal-formularios-frontend -o jsonpath="{.spec.host}"
 ```
 
-Poner ese host exacto en `WEB_ORIGIN` de `06-backend-configmap.yaml` (con `https://`, sin `/` final) y seguir con el resto:
+Poner ese host exacto en `WEB_ORIGIN` de `05-backend-configmap.yaml` (con `https://`, sin `/` final) y seguir con el resto:
 ```bash
-oc apply -f openshift/06-backend-configmap.yaml
+oc apply -f openshift/05-backend-configmap.yaml
+oc apply -f openshift/06-backend-service.yaml
 oc apply -f openshift/07-backend-deployment.yaml
-oc apply -f openshift/08-backend-service.yaml
+oc apply -f openshift/08-frontend-deployment.yaml
 ```

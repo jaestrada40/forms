@@ -4,6 +4,7 @@ dist/
 coverage/
 .DS_Store
 *.log
+docker-compose.pentest.yml
 .env*
 !.env.example
 .claude/
