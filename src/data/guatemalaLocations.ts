@@ -3,7 +3,7 @@
 // municipio faltante o desactualizado (p. ej. municipios creados recientemente), avise
 // para corregir este catálogo — no proviene de una consulta en vivo a una fuente oficial.
 
-export const GUATEMALA_DEPARTMENTS: Record<string, string[]> = {
+const RAW_DEPARTMENTS: Record<string, string[]> = {
   'Guatemala': ['Guatemala', 'Santa Catarina Pinula', 'San José Pinula', 'San José del Golfo', 'Palencia', 'Chinautla', 'San Pedro Ayampuc', 'Mixco', 'San Pedro Sacatepéquez', 'San Juan Sacatepéquez', 'San Raymundo', 'Chuarrancho', 'Fraijanes', 'Amatitlán', 'Villa Nueva', 'Villa Canales', 'San Miguel Petapa'],
   'El Progreso': ['Guastatoya', 'Morazán', 'San Agustín Acasaguastlán', 'San Cristóbal Acasaguastlán', 'El Jícaro', 'Sansare', 'Sanarate', 'San Antonio La Paz'],
   'Sacatepéquez': ['Antigua Guatemala', 'Jocotenango', 'Pastores', 'Sumpango', 'Santo Domingo Xenacoj', 'Santiago Sacatepéquez', 'San Bartolomé Milpas Altas', 'San Lucas Sacatepéquez', 'Santa Lucía Milpas Altas', 'Magdalena Milpas Altas', 'Santa María de Jesús', 'Ciudad Vieja', 'San Miguel Dueñas', 'Alotenango', 'San Antonio Aguas Calientes', 'Santa Catarina Barahona'],
@@ -27,5 +27,14 @@ export const GUATEMALA_DEPARTMENTS: Record<string, string[]> = {
   'Jalapa': ['Jalapa', 'San Pedro Pinula', 'San Luis Jilotepeque', 'San Manuel Chaparrón', 'San Carlos Alzatate', 'Monjas', 'Mataquescuintla'],
   'Jutiapa': ['Jutiapa', 'El Progreso', 'Santa Catarina Mita', 'Agua Blanca', 'Asunción Mita', 'Yupiltepeque', 'Atescatempa', 'Jerez', 'El Adelanto', 'Zapotitlán', 'Comapa', 'Jalpatagua', 'Conguaco', 'Moyuta', 'Pasaco', 'San José Acatempa', 'Quesada'],
 };
+
+const byName = (a: string, b: string) => a.localeCompare(b, 'es');
+
+// Departamentos y municipios en orden alfabético para ubicarlos más fácil en los selectores.
+export const GUATEMALA_DEPARTMENTS: Record<string, string[]> = Object.fromEntries(
+  Object.keys(RAW_DEPARTMENTS)
+    .sort(byName)
+    .map(dep => [dep, [...RAW_DEPARTMENTS[dep]].sort(byName)]),
+);
 
 export const GUATEMALA_DEPARTMENT_NAMES = Object.keys(GUATEMALA_DEPARTMENTS);

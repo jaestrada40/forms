@@ -516,7 +516,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ showToast, isSuperAd
                   </form>
                   <ul className="divide-y divide-slate-100 border border-slate-200 rounded-lg">
                     {departments.length === 0 && <li className="px-3 py-2 text-xs text-slate-400">Aún no hay departamentos.</li>}
-                    {departments.map(d => (
+                    {[...departments].sort((a, b) => a.localeCompare(b, 'es')).map(d => (
                       <li key={d} className="px-3 py-2 text-xs text-slate-700 flex items-center justify-between">
                         <span>{d}</span>
                         <button
