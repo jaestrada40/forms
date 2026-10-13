@@ -115,6 +115,7 @@ El despliegue se compone de PostgreSQL, API backend y frontend. Los manifiestos 
 7. `06-backend-service.yaml`
 8. `07-backend-deployment.yaml`
 9. `08-frontend-deployment.yaml`
+10. `09-networkpolicy-postgresql.yaml` (restringe el acceso a PostgreSQL al backend)
 
 Las imágenes se construyen y publican con `MakeImageBackend.bat` y `MakeImageFrontend.bat`. Antes del primer despliegue se deben crear los secretos, configurar el acceso al registro privado y verificar la clase de almacenamiento del PVC de PostgreSQL.
 

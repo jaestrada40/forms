@@ -5,12 +5,13 @@ import express from 'express';
 import { authenticator } from 'otplib';
 import QRCode from 'qrcode';
 import { z } from 'zod';
-import { consumeMfaToken, createMfaPendingToken, createToken, requireAuth, requireMfaPendingToken, requireRoles } from './auth.js';
+import { consumeMfaToken, createMfaPendingToken, createToken, requireAuth, requireMfaPendingToken, requireRoles, revokeSessionFromRequest, strikeMfaToken } from './auth.js';
 import { audit, db, getSetting, initializeDatabase, setSetting } from './db.js';
 import { encryptSecret, escapeHtml, getStoredSmtp, mailMode, mailSource, saveStoredSmtp, sendMail } from './mailer.js';
 import { readSecret } from './secrets.js';
 import { FailureLimiter, clearAuthCookie, createChallenge, rateLimit, sameOriginOnly, securityHeaders, setAuthCookie, uuidParam, verifyChallenge, verifyExternalCaptcha, evaluateRecaptchaV3, CaptchaProvider } from './security.js';
-import { getSchedules, saveSchedules, sendScheduleNow, startBackgroundJobs, ReportSchedule } from './jobs.js';
+import { getSchedules, saveSchedules, sendScheduleNow, startBackgroundJobs, ReportSchedule, ScheduleBlockedError, reportRecipientsError } from './jobs.js';
+import { insertResponseLocked } from './responses.js';
 
 authenticator.options = { window: 1 };
 
@@ -32,7 +33,19 @@ app.param('id', uuidParam);
 const loginFailuresByIp = new FailureLimiter(15 * 60_000, 30);
 const loginFailuresByAccount = new FailureLimiter(15 * 60_000, 10);
 const loginFailuresByAccountAndIp = new FailureLimiter(15 * 60_000, 5);
-const mfaFailures = new FailureLimiter(5 * 60_000, 5);
+// Wrong MFA codes are counted per user + client IP (so someone elsewhere cannot lock a user out with a few guesses)
+// and, with a higher ceiling, per user alone (to cap slow guessing spread over many IPs). A pending token is also
+// spent after a few wrong codes (see strikeMfaToken), which forces the password step again.
+const mfaFailuresByUserIp = new FailureLimiter(5 * 60_000, 5);
+const mfaFailuresByUser = new FailureLimiter(60 * 60_000, 20);
+const mfaBlockedFor = (req: express.Request, userId: string) =>
+  Math.max(mfaFailuresByUserIp.blockedFor(`${userId}|${req.ip}`), mfaFailuresByUser.blockedFor(userId));
+function rejectMfaCode(req: express.Request, res: express.Response, userId: string) {
+  mfaFailuresByUserIp.fail(`${userId}|${req.ip}`);
+  mfaFailuresByUser.fail(userId);
+  const spent = strikeMfaToken(req.mfaPending!.jti);
+  return res.status(401).json({ message: spent ? 'C\u00f3digo inv\u00e1lido. Inicie sesi\u00f3n nuevamente.' : 'C\u00f3digo inv\u00e1lido.' });
+}
 const publicReadLimit = rateLimit({ windowMs: 60_000, max: 120 });
 const publicSubmitLimit = rateLimit({ windowMs: 60_000, max: 20, key: req => `${req.ip}|${req.params.id}` });
 // Compared against when the e-mail does not exist, so response time does not reveal which accounts exist
@@ -123,9 +136,13 @@ app.post('/api/auth/login', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post('/api/auth/logout', (_req, res) => {
-  clearAuthCookie(res);
-  res.status(204).end();
+app.post('/api/auth/logout', async (req, res, next) => {
+  try {
+    // Beyond clearing the cookie, invalidate the token itself so a copy of it stops working
+    await revokeSessionFromRequest(req);
+    clearAuthCookie(res);
+    res.status(204).end();
+  } catch (error) { next(error); }
 });
 
 app.post('/api/auth/mfa/setup', requireMfaPendingToken, async (req, res, next) => {
@@ -151,18 +168,17 @@ app.post('/api/auth/mfa/activate', requireMfaPendingToken, async (req, res, next
     const user = userResult.rows[0];
     if (!user || user.mfa_enabled) return res.status(409).json({ message: 'La verificación en dos pasos ya está habilitada.' });
     if (!user.mfa_secret) return res.status(400).json({ message: 'No hay una configuración de MFA pendiente. Inicie el proceso nuevamente.' });
-    const wait = mfaFailures.blockedFor(user.id);
-    if (wait) return mfaFailures.respond(res, wait);
+    const wait = mfaBlockedFor(req, user.id);
+    if (wait) return mfaFailuresByUser.respond(res, wait);
     if (!authenticator.check(code, readSecret(user.mfa_secret))) {
-      mfaFailures.fail(user.id);
-      return res.status(401).json({ message: 'Código inválido.' });
+      return rejectMfaCode(req, res, user.id);
     }
     // A correct code only grants a session once per pending token: this stops a captured verify
     // request (and the still-valid TOTP code inside it) from being replayed to mint a second session.
     if (!consumeMfaToken(req.mfaPending!.jti)) {
       return res.status(401).json({ message: 'Este código ya fue utilizado. Inicie sesión nuevamente.' });
     }
-    mfaFailures.succeed(user.id);
+    mfaFailuresByUserIp.succeed(`${user.id}|${req.ip}`);
     await db.query('UPDATE users SET mfa_enabled = true, mfa_enabled_at = NOW() WHERE id = $1', [user.id]);
     const token = startSession(res, user);
     await audit(user.id, 'MFA_ENABLE', 'user', user.id);
@@ -177,18 +193,17 @@ app.post('/api/auth/mfa/verify', requireMfaPendingToken, async (req, res, next) 
     const userResult = await db.query('SELECT id, name, email, role, department, mfa_secret, mfa_enabled FROM users WHERE id = $1', [req.mfaPending!.id]);
     const user = userResult.rows[0];
     if (!user?.mfa_enabled || !user.mfa_secret) return res.status(400).json({ message: 'La verificación en dos pasos no está habilitada para este usuario.' });
-    const wait = mfaFailures.blockedFor(user.id);
-    if (wait) return mfaFailures.respond(res, wait);
+    const wait = mfaBlockedFor(req, user.id);
+    if (wait) return mfaFailuresByUser.respond(res, wait);
     if (!authenticator.check(code, readSecret(user.mfa_secret))) {
-      mfaFailures.fail(user.id);
-      return res.status(401).json({ message: 'Código inválido.' });
+      return rejectMfaCode(req, res, user.id);
     }
     // A correct code only grants a session once per pending token: this stops a captured verify
     // request (and the still-valid TOTP code inside it) from being replayed to mint a second session.
     if (!consumeMfaToken(req.mfaPending!.jti)) {
       return res.status(401).json({ message: 'Este código ya fue utilizado. Inicie sesión nuevamente.' });
     }
-    mfaFailures.succeed(user.id);
+    mfaFailuresByUserIp.succeed(`${user.id}|${req.ip}`);
     const token = startSession(res, user);
     await audit(user.id, 'LOGIN_MFA', 'user', user.id);
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, department: user.department } });
@@ -569,8 +584,8 @@ app.post('/api/report-schedules', requireAuth, requireRoles(...REPORT_ROLES), as
       recipients: z.array(z.string().email()).min(1).max(30),
       includeCsv: z.boolean(),
     }).parse(req.body);
-    const recipientsError = await notificationEmailsError({ settings: { notificationEmails: data.recipients } });
-    if (recipientsError) return res.status(400).json({ message: recipientsError.replace('correos de notificación', 'destinatarios').replace('de notificación', '') });
+    const recipientsError = await reportRecipientsError(data.recipients);
+    if (recipientsError) return res.status(400).json({ message: recipientsError });
     const now = new Date().toISOString();
     const schedule: ReportSchedule = {
       id: crypto.randomUUID(), ...data, ownerId: req.user!.id, ownerName: req.user!.name, ownerRole: req.user!.role,
@@ -601,7 +616,10 @@ app.post('/api/report-schedules/:id/send', requireAuth, requireRoles(...REPORT_R
     const target = visibleSchedules(await getSchedules(), req.user!).find(s => s.id === req.params.id);
     if (!target) return res.status(404).json({ message: 'Programación no encontrada.' });
     if ((await mailMode()) === 'off') return res.status(503).json({ message: 'El servidor de correo (SMTP) no está configurado. Configúrelo en Configuración → Servidor de correo.' });
-    await sendScheduleNow(target);
+    try { await sendScheduleNow(target); } catch (error) {
+      if (error instanceof ScheduleBlockedError) return res.status(409).json({ message: error.message });
+      throw error;
+    }
     res.json({ ok: true });
   } catch (error) { next(error); }
 });
@@ -946,8 +964,9 @@ app.post('/api/public/forms/:id/responses', publicSubmitLimit, async (req, res, 
     }
 
     const folio = `FOR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-    const created = await db.query(`INSERT INTO form_responses (form_id, folio, answers, respondent_email, respondent_name, respondent_department, completion_time_seconds)
-      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, folio, submitted_at`, [req.params.id, folio, answers, payload.respondentEmail, payload.respondentName, payload.respondentDepartment, payload.completionTimeSeconds]);
+    const outcome = await insertResponseLocked(req.params.id, settings, payload, folio, answers);
+    if (outcome.error) return res.status(outcome.error.status).json(outcome.error.body);
+    const created = { rows: [outcome.row] };
     const notifyTo = settings.notifyEmailOnSubmit ? (settings.notificationEmails ?? []).filter(e => z.string().email().safeParse(e).success) : [];
     if (notifyTo.length && notificationBudgetLeft(req.params.id) && (await mailMode()) !== 'off') {
       const title = form.rows[0].title;

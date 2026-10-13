@@ -80,8 +80,41 @@ const csvCell = (v: unknown) => {
   return `"${safe.replace(/"/g, '""')}"`;
 };
 
-async function buildReport(schedule: ReportSchedule, since: Date) {
-  const scoped = schedule.ownerRole === 'Creador';
+const REPORT_ROLES = ['Administrador', 'Creador', 'Analista'];
+
+/** A schedule that must not be sent right now; the message says why. */
+export class ScheduleBlockedError extends Error {}
+
+export class ScheduleOwnerInactiveError extends ScheduleBlockedError {
+  constructor() { super('El due\u00f1o de esta programaci\u00f3n ya no est\u00e1 activo o ya no puede enviar reportes. La programaci\u00f3n fue eliminada.'); }
+}
+
+/**
+ * Report recipients must belong to the institution's allowed e-mail domains. With no domains configured, nothing is
+ * sent: a report carries respondents' e-mails and folios, so an open list would let anyone with report access send them anywhere.
+ */
+export async function reportRecipientsError(recipients: string[]): Promise<string | null> {
+  const institution = await getSetting<{ allowedDomains?: string }>('institution', {});
+  const domains = (institution.allowedDomains ?? '').split(/[,;\s]+/).map(d => d.trim().toLowerCase()).filter(Boolean)
+    .map(d => (d.startsWith('@') ? d : `@${d}`));
+  if (domains.length === 0) {
+    return 'Para enviar reportes, un administrador debe configurar primero los dominios de correo permitidos (Configuraci\u00f3n \u2192 Instituci\u00f3n).';
+  }
+  const outside = recipients.find(r => !domains.some(d => r.toLowerCase().endsWith(d)));
+  return outside ? `Los destinatarios de reportes deben ser de: ${domains.join(', ')}.` : null;
+}
+
+interface ScheduleOwner { name: string; role: string }
+
+/** The schedule's owner as they are now (not as they were when it was created), or null if they may no longer send reports. */
+async function currentOwner(schedule: ReportSchedule): Promise<ScheduleOwner | null> {
+  const result = await db.query('SELECT name, role, status FROM users WHERE id = $1', [schedule.ownerId]);
+  const user = result.rows[0];
+  return user && user.status === 'Activo' && REPORT_ROLES.includes(user.role) ? { name: user.name, role: user.role } : null;
+}
+
+async function buildReport(schedule: ReportSchedule, since: Date, owner: ScheduleOwner) {
+  const scoped = owner.role === 'Creador';
   const params = [since.toISOString(), scoped, schedule.ownerId];
 
   const perForm = await db.query(
@@ -119,7 +152,7 @@ async function buildReport(schedule: ReportSchedule, since: Date) {
       <thead><tr style="background:#1d4ed8;color:#fff"><th style="padding:6px 10px;text-align:left">Formulario</th><th style="padding:6px 10px;text-align:left">Departamento</th><th style="padding:6px 10px;text-align:right">Período</th><th style="padding:6px 10px;text-align:right">Total</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="4" style="padding:10px;color:#94a3b8">Sin formularios.</td></tr>'}</tbody>
     </table>
-    <p style="color:#94a3b8;font-size:12px;margin-top:20px">Programado por ${escapeHtml(schedule.ownerName)}.</p></div>`;
+    <p style="color:#94a3b8;font-size:12px;margin-top:20px">Programado por ${escapeHtml(owner.name)}.</p></div>`;
 
   const attachments = responses
     ? [{
@@ -137,8 +170,18 @@ async function buildReport(schedule: ReportSchedule, since: Date) {
 
 /** Sends one schedule's report now and records it as sent. */
 export async function sendScheduleNow(schedule: ReportSchedule) {
+  // Deactivating a user or changing their role must also affect the reports they scheduled
+  const owner = await currentOwner(schedule);
+  if (!owner) {
+    await saveSchedules((await getSchedules()).filter(s => s.id !== schedule.id));
+    await audit(undefined, 'DELETE', 'settings', 'report_schedules', { reason: 'owner_inactive', ownerId: schedule.ownerId });
+    throw new ScheduleOwnerInactiveError();
+  }
+  // Checked on every send, so a schedule made before the domains were configured (or changed) cannot keep mailing outside
+  const recipientsError = await reportRecipientsError(schedule.recipients);
+  if (recipientsError) throw new ScheduleBlockedError(recipientsError);
   const since = new Date(schedule.lastSentAt);
-  const { html, attachments, periodTotal } = await buildReport(schedule, since);
+  const { html, attachments, periodTotal } = await buildReport(schedule, since, owner);
   await sendMail({ to: schedule.recipients, subject: `Reporte de formularios · ${periodTotal} respuestas nuevas`, html, attachments });
 
   const all = await getSchedules();
@@ -150,7 +193,12 @@ async function runDueSchedules() {
   if ((await mailMode()) === 'off') return;
   for (const schedule of await getSchedules()) {
     if (!isDue(schedule)) continue;
-    try { await sendScheduleNow(schedule); } catch (error) { console.error('No fue posible enviar el reporte programado:', error); }
+    try {
+      await sendScheduleNow(schedule);
+    } catch (error) {
+      if (error instanceof ScheduleBlockedError) { console.warn(`Reporte programado omitido: ${error.message}`); continue; }
+      console.error('No fue posible enviar el reporte programado:', error);
+    }
   }
 }
 

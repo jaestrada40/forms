@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
+import { deriveKey } from './keys.js';
 
 // ---------------------------------------------------------------------------
 // Rate limiting (in memory: counters reset when the API restarts)
@@ -156,7 +157,7 @@ export function uuidParam(_req: Request, res: Response, next: NextFunction, valu
 
 const CHALLENGE_TTL_MS = 15 * 60_000;
 const usedChallenges = new Map<string, number>();
-const challengeKey = () => crypto.createHash('sha256').update(`captcha:${process.env.JWT_SECRET ?? 'formularios'}`).digest();
+const challengeKey = () => deriveKey('captcha-challenge');
 const sign = (payload: string) => crypto.createHmac('sha256', challengeKey()).update(payload).digest('base64url');
 
 export function createChallenge(): { question: string; token: string } {

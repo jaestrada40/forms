@@ -1,0 +1,24 @@
+# Solo el backend puede abrir conexiones a PostgreSQL (puerto 5432). Cualquier otro pod del namespace
+# (o de otros namespaces) queda sin acceso a la base de datos. No afecta al frontend, al backend ni al Route:
+# la politica solo selecciona el pod de PostgreSQL y restringe su trafico de entrada.
+# Si el cluster no aplica NetworkPolicy (red sin soporte), el manifiesto se acepta pero no tiene efecto.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: portal-formularios-postgresql-solo-backend
+  labels:
+    app: portal-formularios-postgresql
+spec:
+  podSelector:
+    matchLabels:
+      app: portal-formularios-postgresql
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: portal-formularios-backend
+      ports:
+        - protocol: TCP
+          port: 5432

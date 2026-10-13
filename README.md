@@ -104,4 +104,5 @@ oc apply -f openshift/05-backend-configmap.yaml
 oc apply -f openshift/06-backend-service.yaml
 oc apply -f openshift/07-backend-deployment.yaml
 oc apply -f openshift/08-frontend-deployment.yaml
+oc apply -f openshift/09-networkpolicy-postgresql.yaml   # solo el backend puede conectarse a PostgreSQL
 ```

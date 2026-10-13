@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import bcrypt from 'bcryptjs';
-import { encryptSecret, isEncryptedSecret } from './secrets.js';
+import { encryptSecret, isEncryptedSecret, readSecret, usesCurrentKey } from './secrets.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -91,11 +91,11 @@ export async function initializeDatabase() {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS token_valid_after TIMESTAMPTZ;
   `);
 
-  // One-time migration: MFA seeds used to be stored in plaintext
+  // Migrations: MFA seeds used to be stored in plaintext, then encrypted with a key shared with other uses
   const legacy = await db.query('SELECT id, mfa_secret FROM users WHERE mfa_secret IS NOT NULL');
   for (const row of legacy.rows) {
-    if (!isEncryptedSecret(row.mfa_secret)) {
-      await db.query('UPDATE users SET mfa_secret = $1 WHERE id = $2', [encryptSecret(row.mfa_secret), row.id]);
+    if (!isEncryptedSecret(row.mfa_secret) || !usesCurrentKey(row.mfa_secret)) {
+      await db.query('UPDATE users SET mfa_secret = $1 WHERE id = $2', [encryptSecret(readSecret(row.mfa_secret)), row.id]);
     }
   }
 
